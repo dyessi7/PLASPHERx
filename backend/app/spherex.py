@@ -35,6 +35,16 @@ SPHEREX_PIXEL_SCALE_ARCSEC = 6.15
 # Solid angle of one pixel in steradians; images are in MJy/sr.
 SPHEREX_PIXEL_SR = math.radians(SPHEREX_PIXEL_SCALE_DEG) ** 2
 
+# SPHEREx FLAGS bits for pixels whose value could not be measured because the
+# detector filled up: OVERFLOW (bit 1) and SUR_ERROR (bit 2). The pipeline sets
+# these pixels to NaN in the IMAGE extension.
+SATURATION_FLAG_BITS = (1 << 1) | (1 << 2)
+
+# Bump whenever the PNG rendering changes. It is part of the frame URL and the
+# disk cache key, so neither browsers nor the server keep serving the old look.
+# v2: saturated cores render white instead of black.
+RENDER_VERSION = 2
+
 SPECTRUM_FLUX_UNIT = "mJy"
 SPECTRUM_APERTURE_RADIUS_PIXELS = 2
 
@@ -199,15 +209,27 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
     )
 
 
+def _saturation_mask(hdul: fits.HDUList) -> np.ndarray | None:
+    """Boolean mask of saturated pixels from the FLAGS extension, or None if absent."""
+    if "FLAGS" not in hdul:
+        return None
+    return (hdul["FLAGS"].data.astype(np.int64) & SATURATION_FLAG_BITS) != 0
+
+
 def aligned_array(fits_bytes: bytes, ra: float, dec: float, fov: float) -> np.ndarray:
     """PURE PROCESSING: Reprojects a FITS cutout onto a north-up grid centered on (ra, dec)
 
     and subtracts the local sky background. Returns the float array (row 0 = south).
+
+    Pixel conventions:
+      +inf = saturated (too bright to measure); rendered white.
+      NaN  = no data (outside the detector footprint); rendered black.
     """
     with fits.open(io.BytesIO(fits_bytes)) as hdul:
         datos = hdul[1].data.astype(float)
         hdr = hdul[1].header.copy()
         wcs_origen = WCS(hdr)
+        sat_mask = _saturation_mask(hdul)
 
     # 1. Configure target WCS grid centered on target
     npix = max(16, int(fov / SPHEREX_PIXEL_SCALE_DEG))
@@ -224,6 +246,15 @@ def aligned_array(fits_bytes: bytes, ra: float, dec: float, fov: float) -> np.nd
     sky_bg = np.nanmedian(alineado)
     if not np.isnan(sky_bg):
         alineado -= sky_bg
+
+    # 4. Saturated cores: the pipeline leaves them NaN, which would render black
+    # (read as "empty sky"). Bilinear interpolation spreads NaN by about a pixel,
+    # so any output pixel touched by a flagged input pixel counts as saturated.
+    if sat_mask is not None and sat_mask.any():
+        sat_aligned, _ = reproject_interp(
+            (sat_mask.astype(float), wcs_origen), destino, shape_out=(npix, npix)
+        )
+        alineado[np.isnan(alineado) & (np.nan_to_num(sat_aligned) > 0)] = np.inf
     return alineado
 
 
@@ -244,12 +275,18 @@ def _encode_png(norm: np.ndarray, zoom: int) -> bytes:
 
 
 def array_to_png(alineado: np.ndarray, zoom: int = 4) -> bytes:
-    """PURE PROCESSING: Percentile contrast stretch (5% to 99.5%) and PNG encoding."""
-    lo, hi = np.nanpercentile(alineado, [5.0, 99.5])
+    """PURE PROCESSING: Percentile contrast stretch (5% to 99.5%) and PNG encoding.
+
+    Saturated pixels (+inf) render white; no-data pixels (NaN) render black.
+    """
+    finite = alineado[np.isfinite(alineado)]
+    lo, hi = np.percentile(finite, [5.0, 99.5]) if finite.size else (0.0, 0.0)
     if hi > lo:
-        norm = np.clip((alineado - lo) / (hi - lo), 0.0, 1.0)
+        with np.errstate(invalid="ignore"):
+            norm = np.clip((alineado - lo) / (hi - lo), 0.0, 1.0)
     else:
         norm = np.zeros_like(alineado)
+    norm[np.isposinf(alineado)] = 1.0
     return _encode_png(norm, zoom)
 
 
@@ -258,13 +295,36 @@ def diff_to_png(diff: np.ndarray, zoom: int = 4) -> bytes:
 
     Gray = no change, white = brighter, black = fainter.
     """
-    scale = np.nanpercentile(np.abs(diff), 99.5) if np.isfinite(diff).any() else 0.0
+    finite = np.isfinite(diff)
+    scale = np.percentile(np.abs(diff[finite]), 99.5) if finite.any() else 0.0
     if scale > 0:
-        norm = 0.5 + 0.5 * np.clip(diff / scale, -1.0, 1.0)
+        with np.errstate(invalid="ignore"):
+            norm = 0.5 + 0.5 * np.clip(diff / scale, -1.0, 1.0)
     else:
         norm = np.full_like(diff, 0.5)
-    # NaN pixels (e.g. masked or saturated) show as "no change".
-    return _encode_png(np.where(np.isnan(norm), 0.5, norm), zoom)
+    # No-data and saturated pixels carry no measurable change: show them as gray.
+    return _encode_png(np.where(finite, norm, 0.5), zoom)
+
+
+def saturated_at(
+    fits_bytes: bytes, ra: float, dec: float, radius_pixels: int = SPECTRUM_APERTURE_RADIUS_PIXELS
+) -> bool:
+    """True if any pixel in the photometry aperture around (ra, dec) is flagged saturated."""
+    try:
+        with fits.open(io.BytesIO(fits_bytes)) as hdul:
+            mask = _saturation_mask(hdul)
+            if mask is None:
+                return False
+            coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+            px, py = WCS(hdul[1].header).world_to_pixel(coord)
+            if not np.isfinite([px, py]).all():
+                return False
+            ix, iy = int(np.round(float(px))), int(np.round(float(py)))
+            h, w = mask.shape
+            r = radius_pixels
+            return bool(mask[max(0, iy - r):min(h, iy + r + 1), max(0, ix - r):min(w, ix + r + 1)].any())
+    except Exception:
+        return False
 
 
 def png_data_uri(png_bytes: bytes) -> str:
@@ -418,6 +478,8 @@ def spectrum_points(
                 x0, x1 = max(0, ix - r), min(w, ix + r + 1)
 
                 aperture_data = data[y0:y1, x0:x1]
+                sat_mask = _saturation_mask(hdul)
+                saturated = bool(sat_mask is not None and sat_mask[y0:y1, x0:x1].any())
                 sky_bg = float(np.nanmedian(data))
                 # Surface brightness (MJy/sr) summed over pixels -> flux in mJy
                 to_mjy = SPHEREX_PIXEL_SR * 1e9
@@ -443,6 +505,8 @@ def spectrum_points(
                         "date": str(f.get("date", _mjd_to_iso_date(float(f["mjd"])))),
                         "detector": str(f.get("detector", "D2")),
                         "obs_id": f.get("obs_id"),
+                        # Saturated pixels are NaN and skipped by nansum: the flux is a lower limit.
+                        "saturated": saturated,
                     }
                 )
         except Exception:

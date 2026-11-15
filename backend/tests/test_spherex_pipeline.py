@@ -52,3 +52,33 @@ def test_cutout_wavelength_pure_function(sample_fits_file):
     lam = spherex.cutout_wavelength(raw_fits_bytes, ra=76.95642, dec=30.40142)
     assert lam is not None
     assert 0.75 <= lam <= 5.0
+
+
+def _png_pixels(png_bytes):
+    import io
+
+    import imageio.v2 as imageio
+
+    return imageio.imread(io.BytesIO(png_bytes))
+
+
+def test_saturated_pixels_render_white_and_no_data_black():
+    """Saturados (+inf) en blanco: negro se leería como cielo vacío. Sin datos (NaN) en negro."""
+    import numpy as np
+
+    arr = np.linspace(0.0, 1.0, 16).reshape(4, 4)
+    arr[1, 1] = np.inf
+    arr[2, 2] = np.nan
+    img = _png_pixels(spherex.array_to_png(arr, zoom=1))
+    # _encode_png voltea las filas (norte arriba)
+    assert img[2, 1] == 255
+    assert img[1, 2] == 0
+
+
+def test_diff_ignores_saturated_pixels():
+    """En la diferencia, un píxel saturado no tiene cambio medible: gris."""
+    import numpy as np
+
+    diff = np.array([[np.inf, 1.0], [np.nan, -1.0]])
+    img = _png_pixels(spherex.diff_to_png(diff, zoom=1))
+    assert img.tolist() == [[127, 0], [127, 255]]

@@ -38,8 +38,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=settings.ALLOWED_METHODS,
     allow_headers=["*"],
-    # Lets the browser read the wavelength header on /api/frame responses.
-    expose_headers=["X-Wavelength-Um"],
+    # Lets the browser read the metadata headers on /api/frame responses.
+    expose_headers=["X-Wavelength-Um", "X-Saturated"],
 )
 
 # Semaphore to control concurrent downloads to IRSA and prevent rate-limiting (429)
@@ -199,6 +199,8 @@ def get_frames(
         encoded_src = quote(access_url, safe="")
         frame_url = (
             f"{base_url}/api/frame?src={encoded_src}&ra={target_ra}&dec={target_dec}&fov={target_fov}"
+            # Changes with the rendering, so browsers drop PNGs cached under the old look.
+            f"&v={spherex.RENDER_VERSION}"
         )
         frames_payload.append(
             FrameItem(
@@ -283,6 +285,8 @@ def get_frame(
     wavelength = spherex.cutout_wavelength(fits_bytes, ra=ra, dec=dec) if fits_bytes else None
     if wavelength is not None:
         headers["X-Wavelength-Um"] = str(wavelength)
+    if fits_bytes:
+        headers["X-Saturated"] = "1" if spherex.saturated_at(fits_bytes, ra=ra, dec=dec) else "0"
 
     return Response(content=png_bytes, media_type="image/png", headers=headers)
 

@@ -47,7 +47,10 @@ def get_cache_stats() -> dict[str, int]:
 
 def make_frame_key(src: str, ra: float, dec: float, fov: float) -> str:
     """Generates a deterministic SHA-256 key for a specific cropped PNG frame."""
-    raw = f"png|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
+    # Includes the render version so PNGs rendered by older code are not served.
+    from app.spherex import RENDER_VERSION
+
+    raw = f"png-v{RENDER_VERSION}|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -59,7 +62,10 @@ def make_cutout_key(src: str, ra: float, dec: float, fov: float) -> str:
 
 def make_query_key(ra: float, dec: float, fov: float, detector: str, n: int) -> str:
     """Generates a deterministic SHA-256 key for a frame metadata query."""
-    raw = f"query|{ra:.5f}|{dec:.5f}|{fov:.4f}|{detector}|{n}"
+    # The cached /api/frames payload embeds frame URLs, which carry the render version.
+    from app.spherex import RENDER_VERSION
+
+    raw = f"query-v{RENDER_VERSION}|{ra:.5f}|{dec:.5f}|{fov:.4f}|{detector}|{n}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

@@ -75,6 +75,9 @@ class SpectrumPoint(BaseModel):
     date: str = Field(..., description="Observation date (YYYY-MM-DD)")
     detector: str = Field(..., description="Corresponding SPHEREx detector")
     obs_id: str | None = Field(None, description="Observation ID")
+    saturated: bool = Field(
+        False, description="Aperture contains saturated pixels; the flux is then a lower limit"
+    )
 
 
 class SpectrumResponse(BaseModel):
