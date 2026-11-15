@@ -29,10 +29,25 @@ function PointTooltip({ active, payload, unit }) {
       </div>
       <div>λ {formatNumber(p.wavelength_um, 4)} µm</div>
       <div>
-        Flux {formatNumber(p.flux, 4)}
+        Flux {p.saturated && '≥ '}
+        {formatNumber(p.flux, 4)}
         {p.flux_err != null && ` ± ${formatNumber(p.flux_err, 2)}`} {unit}
       </div>
+      {p.saturated && <div>Saturated: lower limit</div>}
     </div>
+  )
+}
+
+/**
+ * Saturated points are lower limits (the brightest pixels could not be
+ * measured), so they are drawn hollow instead of filled.
+ */
+function SpectrumDot({ cx, cy, fill, payload }) {
+  if (cx == null || cy == null) return null
+  return payload?.saturated ? (
+    <circle cx={cx} cy={cy} r={4} fill="#0a0a0a" stroke={fill} strokeWidth={2} />
+  ) : (
+    <circle cx={cx} cy={cy} r={5} fill={fill} stroke="#0a0a0a" strokeWidth={2} />
   )
 }
 
@@ -45,6 +60,7 @@ export default function SpectrumChart({ spectrum }) {
   const unit = fluxUnit || ''
   const loading = status === 'loading'
 
+  const anySaturated = points.some((p) => p.saturated)
   const series = DETECTOR_IDS.map((id) => ({ id, points: points.filter((p) => p.detector === id) })).filter(
     (s) => s.points.length > 0,
   )
@@ -120,8 +136,7 @@ export default function SpectrumChart({ spectrum }) {
                     name={s.id}
                     data={s.points}
                     fill={DETECTOR_COLORS[s.id]}
-                    stroke="#0a0a0a"
-                    strokeWidth={2}
+                    shape={SpectrumDot}
                     isAnimationActive={false}
                   >
                     <ErrorBar dataKey="flux_err" direction="y" width={4} stroke={DETECTOR_COLORS[s.id]} />
@@ -135,6 +150,12 @@ export default function SpectrumChart({ spectrum }) {
             <p className="section-hint">Brightness measured in a {formatNumber(apertureArcsec, 3)} arcsec aperture.</p>
           )}
 
+          {anySaturated && (
+            <p className="section-hint">
+              Hollow points are saturated: the star was too bright for the detector, so their flux is a lower limit.
+            </p>
+          )}
+
           <details className="spectrum__table">
             <summary>Show data table</summary>
             <table>
@@ -145,6 +166,7 @@ export default function SpectrumChart({ spectrum }) {
                   <th scope="col">Flux{unit && ` (${unit})`}</th>
                   <th scope="col">Error</th>
                   <th scope="col">MJD</th>
+                  <th scope="col">Saturated</th>
                 </tr>
               </thead>
               <tbody>
@@ -154,9 +176,13 @@ export default function SpectrumChart({ spectrum }) {
                     <tr key={i}>
                       <td>{p.detector}</td>
                       <td className="mono">{formatNumber(p.wavelength_um, 4)}</td>
-                      <td className="mono">{formatNumber(p.flux, 4)}</td>
+                      <td className="mono">
+                        {p.saturated && '≥ '}
+                        {formatNumber(p.flux, 4)}
+                      </td>
                       <td className="mono">{p.flux_err != null ? formatNumber(p.flux_err, 2) : '—'}</td>
                       <td className="mono">{p.mjd != null ? p.mjd.toFixed(2) : '—'}</td>
+                      <td>{p.saturated ? 'Yes (lower limit)' : 'No'}</td>
                     </tr>
                   ))}
               </tbody>
