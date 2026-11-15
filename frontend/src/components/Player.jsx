@@ -135,6 +135,12 @@ export default function Player({ frames, describe, autoPlay = true }) {
             <dd>{wavelength}</dd>
           </div>
         )}
+        {frame.saturated && (
+          <div title="The star is brighter than the detector can measure. The white core is saturated, not a measured value.">
+            <dt>Core</dt>
+            <dd className="player__saturated">Saturated</dd>
+          </div>
+        )}
       </dl>
 
       <div className="player__controls">

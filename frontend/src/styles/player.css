@@ -60,6 +60,11 @@
   font-family: var(--mono);
 }
 
+.player__info .player__saturated {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .player__controls {
   display: flex;
   align-items: center;

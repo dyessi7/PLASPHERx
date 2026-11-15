@@ -84,8 +84,9 @@ export async function loadFrames(query, { signal } = {}) {
 }
 
 /**
- * Downloads one frame PNG. Returns an object URL (the caller must revoke it)
- * and the wavelength from the X-Wavelength-Um header, or null if absent.
+ * Downloads one frame PNG. Returns an object URL (the caller must revoke it),
+ * the wavelength from the X-Wavelength-Um header (null if absent) and whether
+ * the target's core is saturated (X-Saturated: "1"; null if unknown).
  */
 export async function loadFrameImage(url, { signal } = {}) {
   const res = await fetch(url, { signal })
@@ -93,9 +94,11 @@ export async function loadFrameImage(url, { signal } = {}) {
   const blob = await res.blob()
   const header = res.headers.get('X-Wavelength-Um')
   const wavelength = header === null || header.trim() === '' ? NaN : Number(header)
+  const saturatedHeader = res.headers.get('X-Saturated')
   return {
     objectUrl: URL.createObjectURL(blob),
     wavelengthUm: Number.isFinite(wavelength) ? wavelength : null,
+    saturated: saturatedHeader === null ? null : saturatedHeader.trim() === '1',
   }
 }
 
