@@ -16,7 +16,7 @@ FITS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def is_cache_writable() -> bool:
-    """Verifica si el directorio de caché tiene permisos de escritura."""
+    """Checks whether the cache directory has write permissions."""
     test_file = settings.CACHE_DIR / ".write_test"
     try:
         test_file.write_text("ok", encoding="utf-8")
@@ -27,7 +27,7 @@ def is_cache_writable() -> bool:
 
 
 def get_cache_stats() -> dict[str, int]:
-    """Retorna la cantidad de elementos almacenados en cada nivel de caché."""
+    """Returns the number of elements stored across each cache tier."""
     try:
         frames_count = len(list(FRAMES_DIR.glob("*.png")))
         metadata_count = len(list(METADATA_DIR.glob("*.json")))
@@ -46,25 +46,25 @@ def get_cache_stats() -> dict[str, int]:
 
 
 def make_frame_key(src: str, ra: float, dec: float, fov: float) -> str:
-    """Genera una clave SHA-256 determinista para un cuadro PNG recortado específico."""
+    """Generates a deterministic SHA-256 key for a specific cropped PNG frame."""
     raw = f"png|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def make_cutout_key(src: str, ra: float, dec: float, fov: float) -> str:
-    """Genera una clave SHA-256 determinista para un recorte crudo FITS de IRSA."""
+    """Generates a deterministic SHA-256 key for a raw FITS cutout from IRSA."""
     raw = f"fits|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def make_query_key(ra: float, dec: float, fov: float, detector: str, n: int) -> str:
-    """Genera una clave SHA-256 determinista para una consulta de metadatos de cuadros."""
+    """Generates a deterministic SHA-256 key for a frame metadata query."""
     raw = f"query|{ra:.5f}|{dec:.5f}|{fov:.4f}|{detector}|{n}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def get_cached_frame(key: str) -> bytes | None:
-    """Recupera los bytes de un archivo PNG en caché si existe."""
+    """Retrieves the bytes of a cached PNG file if present."""
     path = FRAMES_DIR / f"{key}.png"
     if path.is_file():
         try:
@@ -75,7 +75,7 @@ def get_cached_frame(key: str) -> bytes | None:
 
 
 def save_cached_frame(key: str, data: bytes) -> None:
-    """Guarda los bytes de un archivo PNG procesado en la caché."""
+    """Saves processed PNG frame bytes to disk cache."""
     path = FRAMES_DIR / f"{key}.png"
     try:
         path.write_bytes(data)
@@ -84,7 +84,7 @@ def save_cached_frame(key: str, data: bytes) -> None:
 
 
 def get_cached_fits(key: str) -> bytes | None:
-    """Recupera los bytes de un recorte FITS en caché si existe."""
+    """Retrieves cached raw FITS cutout bytes if present."""
     path = FITS_DIR / f"{key}.fits"
     if path.is_file():
         try:
@@ -95,7 +95,7 @@ def get_cached_fits(key: str) -> bytes | None:
 
 
 def save_cached_fits(key: str, data: bytes) -> None:
-    """Guarda los bytes de un recorte FITS crudo en la caché."""
+    """Saves raw FITS cutout bytes to disk cache."""
     path = FITS_DIR / f"{key}.fits"
     try:
         path.write_bytes(data)
@@ -104,7 +104,7 @@ def save_cached_fits(key: str, data: bytes) -> None:
 
 
 def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> dict | None:
-    """Recupera metadatos JSON cacheados si no han expirado según el TTL."""
+    """Retrieves cached JSON metadata if not expired by TTL."""
     if max_age_seconds is None:
         max_age_seconds = settings.METADATA_CACHE_TTL_SECONDS
 
@@ -125,7 +125,7 @@ def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> dict | 
 
 
 def save_cached_metadata(key: str, data: dict) -> None:
-    """Guarda un diccionario serializable en formato JSON en la caché de metadatos."""
+    """Saves a serializable dictionary as JSON in metadata cache."""
     path = METADATA_DIR / f"{key}.json"
     try:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")

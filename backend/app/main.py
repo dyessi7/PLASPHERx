@@ -36,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Semáforo para controlar descargas simultáneas hacia IRSA y proteger contra bloqueos (429)
+# Semaphore to control concurrent downloads to IRSA and prevent rate-limiting (429)
 _irsa_download_semaphore = threading.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
 
 
@@ -59,17 +59,17 @@ def _resolve_target_and_coordinates(
     dec: float | None,
     fov: float | None,
 ) -> tuple[str, float, float, float, str]:
-    """Helper que resuelve el objetivo, aplica movimiento propio si aplica
+    """Helper that resolves target metadata, applies proper motion if applicable,
 
-    y valida las coordenadas.
-    Retorna (name, ra, dec, fov, target_id).
+    and validates coordinates.
+    Returns (name, ra, dec, fov, target_id).
     """
     if target:
         target_info = targets.get_target_by_id(target, apply_pm=True)
         if not target_info:
             raise HTTPException(
                 status_code=404,
-                detail=f"Objetivo '{target}' no encontrado en el catálogo. Consulte /api/targets.",
+                detail=f"Target '{target}' not found in catalog. See /api/targets.",
             )
         resolved_ra = target_info.ra
         resolved_dec = target_info.dec
@@ -79,7 +79,7 @@ def _resolve_target_and_coordinates(
     if ra is None or dec is None:
         raise HTTPException(
             status_code=400,
-            detail="Debe proporcionar el parámetro 'target' o bien las coordenadas ('ra' y 'dec').",
+            detail="Must provide either 'target' parameter or both coordinates ('ra' and 'dec').",
         )
 
     resolved_fov = fov if fov is not None else settings.DEFAULT_FOV
@@ -92,11 +92,11 @@ def _resolve_target_and_coordinates(
 @app.get(
     "/api/health",
     response_model=HealthResponse,
-    summary="Verificación de estado del servicio",
-    tags=["Sistema"],
+    summary="Service health verification",
+    tags=["System"],
 )
 def health_check():
-    """Verifica la conectividad, el estado del servidor y las estadísticas de caché en disco."""
+    """Verifies system connectivity, server operational status, and disk cache statistics."""
     return HealthResponse(
         status="ok",
         version=settings.API_VERSION,
@@ -109,11 +109,11 @@ def health_check():
 @app.get(
     "/api/targets",
     response_model=TargetsListResponse,
-    summary="Catálogo de los 5 objetivos predefinidos",
-    tags=["Catálogo"],
+    summary="Catalog of the 5 predefined targets",
+    tags=["Catalog"],
 )
 def get_targets():
-    """Devuelve el catálogo de los 5 objetivos predefinidos con sus coordenadas base y tipo (variable o mover)."""
+    """Returns the catalog of the 5 predefined targets with their base coordinates and category ('variable' or 'mover')."""
     catalog_targets = targets.list_targets(apply_pm=False)
     return TargetsListResponse(targets=catalog_targets, total=len(catalog_targets))
 
@@ -127,27 +127,27 @@ def get_targets():
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
-    summary="Secuencia temporal de cuadros para un objetivo o coordenadas",
-    tags=["Astronomía"],
+    summary="Temporal sequence of frames for a target or coordinates",
+    tags=["Astronomy"],
 )
 def get_frames(
     request: Request,
-    target: str | None = Query(None, description="ID del objetivo predefinido (ej: 'r_dra', 'barnard')"),
-    ra: float | None = Query(None, ge=0.0, le=360.0, description="Ascensión Recta en grados (0 a 360)"),
-    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declinación en grados (-90 a 90)"),
-    fov: float | None = Query(None, ge=0.02, le=0.5, description="Campo de visión en grados (0.02 a 0.5)"),
-    detector: str = Query(settings.DEFAULT_DETECTOR, description="Detector SPHEREx (D1 a D6)"),
-    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Número máximo de cuadros (1 a 24)"),
+    target: str | None = Query(None, description="Canonical ID of the predefined target (e.g., 'r_dra', 'barnard')"),
+    ra: float | None = Query(None, ge=0.0, le=360.0, description="Right Ascension in degrees (0 to 360)"),
+    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declination in degrees (-90 to 90)"),
+    fov: float | None = Query(None, ge=0.02, le=0.5, description="Field of view in degrees (0.02 to 0.5)"),
+    detector: str = Query(settings.DEFAULT_DETECTOR, description="SPHEREx detector identifier (D1 to D6)"),
+    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Maximum number of frames (1 to 24)"),
 ):
     if detector not in settings.ALLOWED_DETECTORS:
         raise HTTPException(
             status_code=400,
-            detail=f"Parámetro 'detector' inválido. Debe ser uno de {', '.join(settings.ALLOWED_DETECTORS)}.",
+            detail=f"Invalid 'detector' parameter. Must be one of {', '.join(settings.ALLOWED_DETECTORS)}.",
         )
 
     name, target_ra, target_dec, target_fov, _ = _resolve_target_and_coordinates(target, ra, dec, fov)
 
-    # 1. Comprobar caché de metadatos SIA
+    # 1. Check SIA metadata cache
     query_key = cache.make_query_key(
         ra=target_ra, dec=target_dec, fov=target_fov, detector=detector, n=n
     )
@@ -155,14 +155,14 @@ def get_frames(
     if cached_payload is not None:
         return cached_payload
 
-    # 2. Consultar catálogo de imágenes en IRSA
+    # 2. Query IRSA image catalog
     try:
         rows = spherex.search_images(ra=target_ra, dec=target_dec)
         selected = spherex.select_frames(rows=rows, detector=detector, n=n)
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado al consultar IRSA.")
+        raise HTTPException(status_code=504, detail="IRSA metadata query timed out.")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Fallo al recuperar metadatos de IRSA: {exc}")
+        raise HTTPException(status_code=502, detail=f"Failed to retrieve metadata from IRSA: {exc}")
 
     base_url = str(request.base_url).rstrip("/")
     frames_payload: list[FrameItem] = []
@@ -196,7 +196,7 @@ def get_frames(
         source="irsa",
     )
 
-    # Guardar metadatos en caché
+    # Save metadata to cache
     cache.save_cached_metadata(query_key, response_data.model_dump())
     return response_data
 
@@ -204,34 +204,34 @@ def get_frames(
 @app.get(
     "/api/frame",
     responses={
-        200: {"content": {"image/png": {}}, "description": "Imagen recortada y alineada en PNG"},
+        200: {"content": {"image/png": {}}, "description": "Cropped and aligned PNG image"},
         400: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
-    summary="Descarga y procesa al vuelo el recorte PNG alineado",
-    tags=["Astronomía"],
+    summary="On-the-fly cutout download, alignment, and PNG generation",
+    tags=["Astronomy"],
 )
 def get_frame(
-    src: str = Query(..., description="URL oficial del archivo FITS en IRSA"),
-    ra: float = Query(..., ge=0.0, le=360.0, description="Ascensión Recta en grados"),
-    dec: float = Query(..., ge=-90.0, le=90.0, description="Declinación en grados"),
-    fov: float = Query(settings.DEFAULT_FOV, ge=0.02, le=0.5, description="Campo de visión"),
+    src: str = Query(..., description="Official FITS cutout URL from IRSA"),
+    ra: float = Query(..., ge=0.0, le=360.0, description="Right Ascension in degrees"),
+    dec: float = Query(..., ge=-90.0, le=90.0, description="Declination in degrees"),
+    fov: float = Query(settings.DEFAULT_FOV, ge=0.02, le=0.5, description="Field of view in degrees"),
 ):
-    """Sirve el PNG procesado y alineado:
+    """Serves the processed and aligned PNG frame:
 
-    1. Busca primero en la caché de disco (PNG).
-    2. Si no existe, descarga el FITS con `fetch_cutout` (usando caché FITS y semáforo de conexión).
-    3. Procesa y alinea en memoria con `cutout_to_png`.
-    4. Guarda el resultado en caché y lo entrega como imagen PNG.
+    1. Checks the disk cache first for existing PNG.
+    2. If not found, downloads the FITS cutout with fetch_cutout (using cache & semaphore).
+    3. Processes and aligns in memory with cutout_to_png.
+    4. Saves the resulting PNG to disk cache and returns the image response.
     """
     if not src.startswith(settings.IRSA_PREFIX):
         raise HTTPException(
             status_code=400,
-            detail=f"URL 'src' inválida. Únicamente se permiten URLs oficiales de {settings.IRSA_PREFIX}.",
+            detail=f"Invalid 'src' URL. Only official URLs starting with {settings.IRSA_PREFIX} are allowed.",
         )
 
-    # 1. Comprobar caché de imagen PNG
+    # 1. Check PNG frame cache
     cache_key = cache.make_frame_key(src=src, ra=ra, dec=dec, fov=fov)
     cached_bytes = cache.get_cached_frame(cache_key)
     if cached_bytes is not None:
@@ -241,17 +241,17 @@ def get_frame(
             headers={"Cache-Control": f"public, max-age={settings.FRAME_CACHE_MAX_AGE_SECONDS}"},
         )
 
-    # 2. Descargar y procesar al vuelo
+    # 2. Fetch and process cutout on the fly
     try:
         with _irsa_download_semaphore:
             fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
             png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado al descargar recorte de IRSA.")
+        raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Fallo al procesar recorte de IRSA: {exc}")
+        raise HTTPException(status_code=502, detail=f"Failed to process cutout from IRSA: {exc}")
 
-    # Guardar PNG en caché
+    # Save PNG to cache
     cache.save_cached_frame(cache_key, png_bytes)
 
     return Response(
@@ -270,25 +270,25 @@ def get_frame(
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
-    summary="Agrupación temporal de observaciones por épocas de SPHEREx",
-    tags=["Vistas Avanzadas"],
+    summary="Temporal grouping of observations by SPHEREx survey epochs",
+    tags=["Advanced Views"],
 )
 def get_epochs(
     request: Request,
-    target: str | None = Query(None, description="ID del objetivo predefinido (ej: 'r_dra')"),
-    ra: float | None = Query(None, ge=0.0, le=360.0, description="Ascensión Recta en grados"),
-    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declinación en grados"),
-    fov: float | None = Query(None, ge=0.02, le=0.5, description="Campo de visión en grados"),
-    detector: str = Query(settings.DEFAULT_DETECTOR, description="Detector SPHEREx (D1 a D6)"),
+    target: str | None = Query(None, description="Canonical ID of the predefined target (e.g., 'r_dra')"),
+    ra: float | None = Query(None, ge=0.0, le=360.0, description="Right Ascension in degrees"),
+    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declination in degrees"),
+    fov: float | None = Query(None, ge=0.02, le=0.5, description="Field of view in degrees"),
+    detector: str = Query(settings.DEFAULT_DETECTOR, description="SPHEREx detector identifier (D1 to D6)"),
     threshold_days: float = Query(
-        45.0, ge=5.0, le=180.0, description="Umbral de días para separar épocas (default: 45 días)"
+        45.0, ge=5.0, le=180.0, description="Day separation threshold to distinguish survey epochs (default: 45 days)"
     ),
 ):
-    """Consume `build_epochs` para agrupar los cuadros en pasadas y épocas de exploración."""
+    """Consumes build_epochs to cluster observation frames into survey passes and observation epochs."""
     if detector not in settings.ALLOWED_DETECTORS:
         raise HTTPException(
             status_code=400,
-            detail=f"Parámetro 'detector' inválido. Debe ser uno de {', '.join(settings.ALLOWED_DETECTORS)}.",
+            detail=f"Invalid 'detector' parameter. Must be one of {', '.join(settings.ALLOWED_DETECTORS)}.",
         )
 
     name, target_ra, target_dec, target_fov, _ = _resolve_target_and_coordinates(target, ra, dec, fov)
@@ -297,9 +297,9 @@ def get_epochs(
         rows = spherex.search_images(ra=target_ra, dec=target_dec)
         selected = spherex.select_frames(rows=rows, detector=detector, n=settings.MAX_FRAMES)
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado al consultar IRSA.")
+        raise HTTPException(status_code=504, detail="IRSA observation query timed out.")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Fallo al consultar IRSA: {exc}")
+        raise HTTPException(status_code=502, detail=f"Failed to query IRSA: {exc}")
 
     base_url = str(request.base_url).rstrip("/")
     frames_list = []
@@ -359,25 +359,22 @@ def get_epochs(
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
-    summary="Puntos de fotometría y espectro (flujo vs longitud de onda)",
-    tags=["Vistas Avanzadas"],
+    summary="Photometry and spectral points (flux vs wavelength)",
+    tags=["Advanced Views"],
 )
 def get_spectrum(
-    target: str | None = Query(None, description="ID del objetivo predefinido (ej: 'rw_aur')"),
-    ra: float | None = Query(None, ge=0.0, le=360.0, description="Ascensión Recta en grados"),
-    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declinación en grados"),
-    fov: float | None = Query(None, ge=0.02, le=0.5, description="Campo de visión en grados"),
-    detector: str = Query(settings.DEFAULT_DETECTOR, description="Detector SPHEREx (D1 a D6)"),
-    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Número de puntos a analizar"),
+    target: str | None = Query(None, description="Canonical ID of the predefined target (e.g., 'rw_aur')"),
+    ra: float | None = Query(None, ge=0.0, le=360.0, description="Right Ascension in degrees"),
+    dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declination in degrees"),
+    fov: float | None = Query(None, ge=0.02, le=0.5, description="Field of view in degrees"),
+    detector: str = Query(settings.DEFAULT_DETECTOR, description="SPHEREx detector identifier (D1 to D6)"),
+    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Maximum number of observation points to analyze"),
 ):
-    """Consume `spectrum_points` para calcular el flujo fotométrico
-
-    y la longitud de onda de cada observación en el objetivo.
-    """
+    """Consumes spectrum_points to calculate aperture photometry and wavelength for each observation at the target."""
     if detector not in settings.ALLOWED_DETECTORS:
         raise HTTPException(
             status_code=400,
-            detail=f"Parámetro 'detector' inválido. Debe ser uno de {', '.join(settings.ALLOWED_DETECTORS)}.",
+            detail=f"Invalid 'detector' parameter. Must be one of {', '.join(settings.ALLOWED_DETECTORS)}.",
         )
 
     name, target_ra, target_dec, target_fov, _ = _resolve_target_and_coordinates(target, ra, dec, fov)
@@ -386,11 +383,11 @@ def get_spectrum(
         rows = spherex.search_images(ra=target_ra, dec=target_dec)
         selected = spherex.select_frames(rows=rows, detector=detector, n=n)
     except TimeoutError:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado al consultar IRSA.")
+        raise HTTPException(status_code=504, detail="IRSA observation query timed out.")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Fallo al consultar IRSA: {exc}")
+        raise HTTPException(status_code=502, detail=f"Failed to query IRSA: {exc}")
 
-    # Extraer puntos fotométricos y espectrales
+    # Extract photometric and spectral points
     raw_points = spherex.spectrum_points(selected, ra=target_ra, dec=target_dec)
 
     spectrum_items = [SpectrumPoint(**p) for p in raw_points]

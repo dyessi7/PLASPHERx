@@ -20,27 +20,27 @@ from reproject import reproject_interp
 from app import cache
 from app.config import get_settings
 
-# Configurar logs y silenciar alertas menores de astropy/wcs
+# Configure logging and suppress minor astropy/wcs warnings
 logging.getLogger("astropy").setLevel(logging.ERROR)
 logging.getLogger("reproject").setLevel(logging.ERROR)
 
 settings = get_settings()
 conf.remote_timeout = settings.IRSA_TIMEOUT_SECONDS
 
-# Escala de placa de SPHEREx: 6.15 segundos de arco por píxel
+# SPHEREx plate scale: 6.15 arcseconds per pixel
 SPHEREX_PIXEL_SCALE_DEG = 6.15 / 3600.0
 
 
 def _mjd_to_iso_date(mjd: float) -> str:
-    """Convierte fecha MJD a cadena ISO YYYY-MM-DD."""
+    """Converts Modified Julian Date (MJD) to ISO YYYY-MM-DD string."""
     unix_seconds = (mjd - 40587.0) * 86400.0
     return datetime.fromtimestamp(unix_seconds, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
-    """Consulta las imágenes disponibles en IRSA SIA (SPHEREx DR1 y QR3)
+    """Queries available images in IRSA SIA (SPHEREx DR1 and QR3)
 
-    para unas coordenadas dadas, ordenadas cronológicamente.
+    for given coordinates, sorted chronologically.
     """
     coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
     try:
@@ -52,7 +52,7 @@ def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
         )
         table = res.to_table() if hasattr(res, "to_table") else res
     except Exception as irsa_err:
-        # Respaldo: Comprobar si las coordenadas coinciden con un objetivo local con manifest.csv
+        # Fallback: Check if coordinates match a local target with manifest.csv
         from app import targets
 
         matched = targets.find_target_by_coords(ra, dec, tolerance_deg=0.05)
@@ -80,7 +80,7 @@ def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
     if len(table) == 0:
         return []
 
-    # Deduplicar por obs_id y ordenar por t_min (tiempo MJD)
+    # Deduplicate by obs_id and sort by t_min (MJD time)
     records: dict[str, dict[str, Any]] = {}
     for r in table:
         obs_id = str(r["obs_id"]).replace("/", "_")
@@ -101,7 +101,7 @@ def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
 
 
 def select_frames(rows: list[dict[str, Any]], detector: str = "D2", n: int = 16) -> list[dict[str, Any]]:
-    """Filtra por detector y selecciona una muestra homogéneamente distribuida en el tiempo."""
+    """Filters by detector and selects a uniformly distributed sample over the observation timeline."""
     filtered = [r for r in rows if r.get("detector") == detector]
     if not filtered:
         filtered = rows
@@ -109,13 +109,13 @@ def select_frames(rows: list[dict[str, Any]], detector: str = "D2", n: int = 16)
     if len(filtered) <= n:
         return filtered
 
-    # Muestreo temporal uniforme (np.linspace) a lo largo de toda la serie
+    # Uniform temporal sampling (np.linspace) across the entire time series
     indices = np.unique(np.linspace(0, len(filtered) - 1, n).astype(int))
     return [filtered[i] for i in indices]
 
 
 def _build_cutout_url(access_url: str, ra: float, dec: float, fov: float) -> str:
-    """Construye la URL con parámetros de recorte para IRSA."""
+    """Builds the URL with cutout center and size parameters for IRSA."""
     if "center=" in access_url and "size=" in access_url:
         return access_url
     separator = "&" if "?" in access_url else "?"
@@ -123,7 +123,7 @@ def _build_cutout_url(access_url: str, ra: float, dec: float, fov: float) -> str
 
 
 def _find_local_fits(access_url: str) -> Path | None:
-    """Busca si el archivo FITS referenciado ya existe descargado en RAW_FITS_DIR."""
+    """Checks if the referenced FITS file is already downloaded in RAW_FITS_DIR."""
     clean_name = access_url.split("?")[0].split("/")[-1]
     if not clean_name.endswith(".fits"):
         clean_name += ".fits"
@@ -134,7 +134,7 @@ def _find_local_fits(access_url: str) -> Path | None:
                 candidate = sub / clean_name
                 if candidate.is_file():
                     return candidate
-                # Coincidencia por ID de observación (ej: 2025W36_1A_0095_1)
+                # Match by observation ID (e.g., 2025W36_1A_0095_1)
                 for f in sub.glob("*.fits"):
                     if f.stem in clean_name:
                         return f
@@ -142,16 +142,16 @@ def _find_local_fits(access_url: str) -> Path | None:
 
 
 def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
-    """DESCARGA PURA: Obtiene los bytes del recorte FITS desde la caché de disco,
+    """PURE FETCH: Retrieves raw FITS cutout bytes from disk cache,
 
-    del almacén local de FITS o descargándolo de IRSA con reintentos y backoff.
+    local store, or downloading from IRSA with retries and backoff.
     """
     cutout_key = cache.make_cutout_key(access_url, ra=ra, dec=dec, fov=fov)
     cached_fits_bytes = cache.get_cached_fits(cutout_key)
     if cached_fits_bytes is not None:
         return cached_fits_bytes
 
-    # 1. Verificar si existe en el directorio local de descargas de FITS
+    # 1. Check local FITS download store
     local_path = _find_local_fits(access_url)
     if local_path and local_path.is_file():
         try:
@@ -161,8 +161,8 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
         except OSError:
             pass
 
-    # 2. Descargar recorte desde IRSA con reintentos y retroceso exponencial
-    cutout_url = _build_cutout_url(access_url, ra, dec, fov)
+    # 2. Download cutout from IRSA with retries and exponential backoff
+    cutout_url = _build_cutout_url(access_url, ra=ra, dec=dec, fov=fov)
     last_err: Exception | None = None
 
     for attempt in range(settings.IRSA_MAX_RETRIES):
@@ -187,7 +187,7 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
             break
 
     raise RuntimeError(
-        f"Error descargando recorte FITS de IRSA tras {settings.IRSA_MAX_RETRIES} intentos: {last_err}"
+        f"Failed to download FITS cutout from IRSA after {settings.IRSA_MAX_RETRIES} attempts: {last_err}"
     )
 
 
@@ -198,13 +198,13 @@ def cutout_to_png(
     fov: float,
     zoom: int = 4,
 ) -> bytes:
-    """PROCESAMIENTO PURO: Convierte bytes de FITS en memoria a una imagen PNG alineada y contrastada."""
+    """PURE PROCESSING: Converts in-memory FITS bytes to an aligned, contrast-stretched PNG image."""
     with fits.open(io.BytesIO(fits_bytes)) as hdul:
         datos = hdul[1].data.astype(float)
         hdr = hdul[1].header.copy()
         wcs_origen = WCS(hdr)
 
-    # 1. Configurar grilla de destino WCS centrada en el objetivo
+    # 1. Configure target WCS grid centered on target
     npix = max(16, int(fov / SPHEREX_PIXEL_SCALE_DEG))
     destino = WCS(naxis=2)
     destino.wcs.ctype = ["RA---TAN", "DEC--TAN"]
@@ -212,15 +212,15 @@ def cutout_to_png(
     destino.wcs.crpix = [npix / 2.0 + 0.5, npix / 2.0 + 0.5]
     destino.wcs.cdelt = [-SPHEREX_PIXEL_SCALE_DEG, SPHEREX_PIXEL_SCALE_DEG]
 
-    # 2. Reproyección espacial exacta
+    # 2. Exact spatial reprojection
     alineado, _ = reproject_interp((datos, wcs_origen), destino, shape_out=(npix, npix))
 
-    # 3. Sustracción de fondo de cielo local
+    # 3. Local sky background subtraction
     sky_bg = np.nanmedian(alineado)
     if not np.isnan(sky_bg):
         alineado -= sky_bg
 
-    # 4. Estiramiento de contraste por percentiles astronómicos (5% a 99.5%)
+    # 4. Astronomical percentile contrast stretching (5% to 99.5%)
     lo, hi = np.nanpercentile(alineado, [5.0, 99.5])
     if hi > lo:
         norm = np.clip((alineado - lo) / (hi - lo), 0.0, 1.0)
@@ -229,23 +229,23 @@ def cutout_to_png(
 
     img8 = (np.nan_to_num(norm) * 255.0).astype(np.uint8)
 
-    # 5. Voltear verticalmente para orientación astronómica estándar (Norte arriba)
+    # 5. Flip vertically for standard astronomical orientation (North Up)
     img8 = np.flipud(img8)
 
-    # 6. Ampliación por bloques de píxeles para nitidez web
+    # 6. Nearest-neighbor pixel block magnification for crisp web rendering
     if zoom > 1:
         img8 = np.kron(img8, np.ones((zoom, zoom), dtype=np.uint8))
 
-    # 7. Codificar a PNG en memoria
+    # 7. Encode to PNG in memory
     buf = io.BytesIO()
     imageio.imwrite(buf, img8, format="PNG")
     return buf.getvalue()
 
 
 def cutout_wavelength(fits_bytes: bytes | fits.Header, ra: float, dec: float, fobj: Any = None) -> float | None:
-    """Extrae la longitud de onda observada en micrómetros en la posición (ra, dec)
+    """Extracts observed wavelength in micrometers at position (ra, dec)
 
-    a partir de la clave WCS 'W' del FITS en memoria o de su encabezado.
+    from the FITS WCS 'W' key in memory or header.
     """
     try:
         if isinstance(fits_bytes, fits.Header):
@@ -267,7 +267,7 @@ def cutout_wavelength(fits_bytes: bytes | fits.Header, ra: float, dec: float, fo
         return None
 
 
-# Alias para compatibilidad hacia atrás
+# Alias for backwards compatibility
 extract_wavelength = cutout_wavelength
 
 
@@ -278,20 +278,20 @@ def frame_png(
     fov: float,
     zoom: int = 4,
 ) -> bytes:
-    """Función de alto nivel: recupera/descarga el recorte FITS y lo procesa a PNG."""
+    """High-level helper: fetches/downloads FITS cutout and processes it into PNG."""
     raw_fits = fetch_cutout(access_url, ra=ra, dec=dec, fov=fov)
     return cutout_to_png(raw_fits, ra=ra, dec=dec, fov=fov, zoom=zoom)
 
 
 def build_epochs(frames: list[dict[str, Any]], threshold_days: float = 45.0) -> list[dict[str, Any]]:
-    """Agrupa una secuencia de cuadros en épocas de observación astronómica
+    """Clusters a sequence of frames into astronomical observation epochs
 
-    basándose en la separación temporal entre pasadas de SPHEREx.
+    based on SPHEREx survey timeline gaps.
     """
     if not frames:
         return []
 
-    # Asegurar orden cronológico por MJD
+    # Ensure chronological order by MJD
     sorted_frames = sorted(frames, key=lambda f: float(f["mjd"]))
 
     epochs: list[list[dict[str, Any]]] = []
@@ -318,9 +318,9 @@ def build_epochs(frames: list[dict[str, Any]], threshold_days: float = 45.0) -> 
         end_date = _mjd_to_iso_date(mjd_max)
         detector = cluster[0].get("detector", "D2")
 
-        # Generar etiqueta descriptiva
+        # Generate descriptive label
         start_month_year = datetime.fromisoformat(start_date).strftime("%b %Y")
-        label = f"Época {idx} ({start_month_year})"
+        label = f"Epoch {idx} ({start_month_year})"
 
         result.append(
             {
@@ -346,9 +346,9 @@ def spectrum_points(
     dec: float,
     aperture_radius_pixels: int = 2,
 ) -> list[dict[str, Any]]:
-    """Calcula fotometría de apertura y puntos de espectro (flujo vs longitud de onda)
+    """Calculates aperture photometry and spectral points (flux vs wavelength)
 
-    para cada observación en la posición objetivo.
+    for each observation at the target position.
     """
     points: list[dict[str, Any]] = []
 
@@ -358,20 +358,20 @@ def spectrum_points(
             continue
 
         try:
-            # Obtener FITS (desde caché de disco o descarga)
+            # Fetch FITS (from disk cache or download)
             fits_bytes = fetch_cutout(access_url, ra=ra, dec=dec, fov=settings.DEFAULT_FOV)
             with fits.open(io.BytesIO(fits_bytes)) as hdul:
                 data = hdul[1].data.astype(float)
                 hdr = hdul[1].header
                 w_spatial = WCS(hdr)
 
-                # Coordenadas de píxel del objetivo
+                # Target pixel coordinates
                 coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
                 px, py = w_spatial.world_to_pixel(coord)
                 ix, iy = int(np.round(float(px))), int(np.round(float(py)))
 
                 h, w = data.shape
-                # Apertura cuadrada alrededor del objetivo
+                # Square aperture around target
                 r = aperture_radius_pixels
                 y0, y1 = max(0, iy - r), min(h, iy + r + 1)
                 x0, x1 = max(0, ix - r), min(w, ix + r + 1)
@@ -380,12 +380,12 @@ def spectrum_points(
                 sky_bg = float(np.nanmedian(data))
                 flux_val = float(np.nansum(aperture_data - sky_bg))
 
-                # Estimar incertidumbre como desviación estándar del fondo * raíz del área
+                # Estimate uncertainty as background std dev * sqrt(area)
                 sky_std = float(np.nanstd(data))
                 area = aperture_data.size
                 flux_err = float(sky_std * math.sqrt(area)) if area > 0 else None
 
-            # Longitud de onda
+            # Wavelength
             lam = f.get("wavelength_um")
             if lam is None:
                 lam = cutout_wavelength(fits_bytes, ra=ra, dec=dec)
@@ -405,6 +405,6 @@ def spectrum_points(
         except Exception:
             continue
 
-    # Ordenar por longitud de onda ascendente
+    # Sort by ascending wavelength
     points.sort(key=lambda p: p["wavelength_um"])
     return points

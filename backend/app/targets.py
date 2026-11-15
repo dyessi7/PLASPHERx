@@ -5,12 +5,12 @@ from app.schemas import TargetItem
 
 settings = get_settings()
 
-# Diccionario oficial de los 5 objetivos predefinidos para SPHEREx / Planet X
+# Official dictionary of the 5 predefined targets for SPHEREx / Planet X
 TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     "r_dra": {
         "id": "r_dra",
         "name": "R Draconis",
-        "description": "Estrella variable gigante roja tipo Mira con variación periódica de brillo.",
+        "description": "Mira-type red giant variable star with periodic brightness pulsations and mass loss.",
         "target_type": "variable",
         "ra": 248.1675,
         "dec": 66.7550,
@@ -23,7 +23,7 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     "rw_aur": {
         "id": "rw_aur",
         "name": "RW Aurigae",
-        "description": "Sistema estelar binario joven tipo T Tauri con atenuaciones ópticas profundas.",
+        "description": "Young T Tauri binary star system exhibiting deep optical dimming events from circumstellar dust.",
         "target_type": "variable",
         "ra": 76.95642,
         "dec": 30.40142,
@@ -36,7 +36,7 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     "barnard": {
         "id": "barnard",
         "name": "Barnard's Star",
-        "description": "Enana roja cercana con el mayor movimiento propio conocido en el cielo (10.3 arcsec/año).",
+        "description": "Nearby red dwarf star with the largest known proper motion in the sky (10.3 arcsec/yr).",
         "target_type": "mover",
         "ra": 269.45208,
         "dec": 4.69339,
@@ -49,7 +49,7 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     "wise0855": {
         "id": "wise0855",
         "name": "WISE J0855-0714",
-        "description": "Enana sub-marrón ultrafía (tipo Y), el objeto subestelar más frío fuera del Sistema Solar.",
+        "description": "Ultra-cool sub-brown dwarf (spectral class Y), the coldest known sub-stellar object outside the Solar System.",
         "target_type": "mover",
         "ra": 133.79513,
         "dec": -7.24515,
@@ -62,7 +62,7 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     "eps_ind": {
         "id": "eps_ind",
         "name": "Epsilon Indi",
-        "description": "Sistema estelar cercano que alberga un par de enanas marrones y un exoplaneta gigante.",
+        "description": "Nearby stellar system hosting a brown dwarf binary pair and a confirmed Jovian exoplanet.",
         "target_type": "mover",
         "ra": 331.0438,
         "dec": -56.7827,
@@ -76,9 +76,9 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
 
 
 def calculate_target_position(target_id: str, date_str: str = "2026-01-01") -> tuple[float, float]:
-    """Calcula la posición (RA, Dec) en grados corregida por movimiento propio para una fecha dada."""
+    """Calculates the target's position (RA, Dec) in degrees corrected for proper motion at a given date."""
     if target_id not in TARGETS_CATALOG:
-        raise ValueError(f"Objetivo '{target_id}' no encontrado en el catálogo.")
+        raise ValueError(f"Target '{target_id}' not found in catalog.")
 
     o = TARGETS_CATALOG[target_id]
     pmra = o.get("pmra", 0.0)
@@ -115,7 +115,7 @@ def calculate_target_position(target_id: str, date_str: str = "2026-01-01") -> t
 
 
 def get_target_by_id(target_id: str, apply_pm: bool = True) -> TargetItem | None:
-    """Retorna los metadatos de un objetivo. Si apply_pm=True, entrega las coordenadas actualizadas a 2026."""
+    """Retrieves target metadata. If apply_pm=True, returns coordinates propagated to the reference epoch."""
     target_id_clean = target_id.lower().strip()
     if target_id_clean not in TARGETS_CATALOG:
         return None
@@ -142,7 +142,7 @@ def get_target_by_id(target_id: str, apply_pm: bool = True) -> TargetItem | None
 
 
 def list_targets(apply_pm: bool = False) -> list[TargetItem]:
-    """Retorna los 5 objetivos predefinidos con sus coordenadas base y tipo (variable o mover)."""
+    """Returns the 5 predefined targets with their base coordinates and category ('variable' or 'mover')."""
     result: list[TargetItem] = []
     for tid in TARGETS_CATALOG:
         item = get_target_by_id(tid, apply_pm=apply_pm)
@@ -152,7 +152,7 @@ def list_targets(apply_pm: bool = False) -> list[TargetItem]:
 
 
 def find_target_by_coords(ra: float, dec: float, tolerance_deg: float = 0.05) -> TargetItem | None:
-    """Identifica si unas coordenadas (ra, dec) dadas corresponden a un objetivo conocido dentro de la tolerancia."""
+    """Identifies whether given (RA, Dec) coordinates match a known catalog target within tolerance."""
     import math
 
     for tid, _ in TARGETS_CATALOG.items():

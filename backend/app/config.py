@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     API_TITLE: str = "SPHEREx Sky Viewer API"
     API_VERSION: str = "0.1.0"
     API_DESCRIPTION: str = (
-        "Backend para exploración y animación temporal de datos astronómicos de NASA SPHEREx."
+        "High-performance backend for exploration, time-series animation, and spectral analysis of NASA SPHEREx astronomical data."
     )
     DEBUG: bool = False
 
