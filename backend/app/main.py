@@ -1,6 +1,9 @@
 import threading
+import warnings
+
+import numpy as np
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app import cache, spherex, targets
 from app.config import get_settings
 from app.schemas import (
+    DiffItem,
     EpochItem,
     EpochsResponse,
     ErrorResponse,
@@ -34,6 +38,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=settings.ALLOWED_METHODS,
     allow_headers=["*"],
+    # Lets the browser read the wavelength header on /api/frame responses.
+    expose_headers=["X-Wavelength-Um"],
 )
 
 # Semaphore to control concurrent downloads to IRSA and prevent rate-limiting (429)
@@ -87,6 +93,27 @@ def _resolve_target_and_coordinates(
     name = matched.name if matched else f"custom_{ra:.4f}_{dec:.4f}"
     target_id = matched.id if matched else "custom"
     return name, ra, dec, resolved_fov, target_id
+
+
+def _select_rows_cached(ra: float, dec: float, fov: float, detector: str, n: int) -> list[dict]:
+    """Frame rows for a query, reusing the /api/frames metadata cache when present
+
+    so follow-up requests do not depend on IRSA being reachable again.
+    """
+    cached = cache.get_cached_metadata(
+        cache.make_query_key(ra=ra, dec=dec, fov=fov, detector=detector, n=n)
+    )
+    if cached and cached.get("frames"):
+        rows = []
+        for f in cached["frames"]:
+            src = parse_qs(urlparse(f["url"]).query).get("src", [None])[0]
+            if src:
+                rows.append({"access_url": src, "mjd": f["mjd"], "detector": f["detector"]})
+        if rows:
+            return rows
+
+    rows = spherex.search_images(ra=ra, dec=dec)
+    return spherex.select_frames(rows=rows, detector=detector, n=n)
 
 
 @app.get(
@@ -233,32 +260,31 @@ def get_frame(
 
     # 1. Check PNG frame cache
     cache_key = cache.make_frame_key(src=src, ra=ra, dec=dec, fov=fov)
-    cached_bytes = cache.get_cached_frame(cache_key)
-    if cached_bytes is not None:
-        return Response(
-            content=cached_bytes,
-            media_type="image/png",
-            headers={"Cache-Control": f"public, max-age={settings.FRAME_CACHE_MAX_AGE_SECONDS}"},
-        )
+    png_bytes = cache.get_cached_frame(cache_key)
 
-    # 2. Fetch and process cutout on the fly
-    try:
-        with _irsa_download_semaphore:
-            fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
-            png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
-    except TimeoutError:
-        raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to process cutout from IRSA: {exc}")
+    if png_bytes is not None:
+        # The FITS is only needed for the wavelength header; never re-download it for that.
+        fits_bytes = cache.get_cached_fits(cache.make_cutout_key(src, ra=ra, dec=dec, fov=fov))
+    else:
+        # 2. Fetch and process cutout on the fly
+        try:
+            with _irsa_download_semaphore:
+                fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
+                png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
+        except TimeoutError:
+            raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to process cutout from IRSA: {exc}")
 
-    # Save PNG to cache
-    cache.save_cached_frame(cache_key, png_bytes)
+        # Save PNG to cache
+        cache.save_cached_frame(cache_key, png_bytes)
 
-    return Response(
-        content=png_bytes,
-        media_type="image/png",
-        headers={"Cache-Control": f"public, max-age={settings.FRAME_CACHE_MAX_AGE_SECONDS}"},
-    )
+    headers = {"Cache-Control": f"public, max-age={settings.FRAME_CACHE_MAX_AGE_SECONDS}"}
+    wavelength = spherex.cutout_wavelength(fits_bytes, ra=ra, dec=dec) if fits_bytes else None
+    if wavelength is not None:
+        headers["X-Wavelength-Um"] = str(wavelength)
+
+    return Response(content=png_bytes, media_type="image/png", headers=headers)
 
 
 @app.get(
@@ -274,17 +300,19 @@ def get_frame(
     tags=["Advanced Views"],
 )
 def get_epochs(
-    request: Request,
     target: str | None = Query(None, description="Canonical ID of the predefined target (e.g., 'r_dra')"),
     ra: float | None = Query(None, ge=0.0, le=360.0, description="Right Ascension in degrees"),
     dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declination in degrees"),
     fov: float | None = Query(None, ge=0.02, le=0.5, description="Field of view in degrees"),
     detector: str = Query(settings.DEFAULT_DETECTOR, description="SPHEREx detector identifier (D1 to D6)"),
+    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Frames to sample (same as /api/frames, so cutouts are cached)"),
     threshold_days: float = Query(
         45.0, ge=5.0, le=180.0, description="Day separation threshold to distinguish survey epochs (default: 45 days)"
     ),
 ):
-    """Consumes build_epochs to cluster observation frames into survey passes and observation epochs."""
+    """Groups the frames into observing epochs, stacks each epoch into one image,
+    and returns the differences between consecutive epochs. Images are PNG data URIs.
+    """
     if detector not in settings.ALLOWED_DETECTORS:
         raise HTTPException(
             status_code=400,
@@ -294,47 +322,54 @@ def get_epochs(
     name, target_ra, target_dec, target_fov, _ = _resolve_target_and_coordinates(target, ra, dec, fov)
 
     try:
-        rows = spherex.search_images(ra=target_ra, dec=target_dec)
-        selected = spherex.select_frames(rows=rows, detector=detector, n=settings.MAX_FRAMES)
+        selected = _select_rows_cached(target_ra, target_dec, target_fov, detector, n)
     except TimeoutError:
         raise HTTPException(status_code=504, detail="IRSA observation query timed out.")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to query IRSA: {exc}")
 
-    base_url = str(request.base_url).rstrip("/")
+    # Aligned arrays for every frame; frames that fail to download are skipped.
     frames_list = []
     for row in selected:
-        encoded_src = quote(row["access_url"], safe="")
-        frame_url = (
-            f"{base_url}/api/frame?src={encoded_src}&ra={target_ra}&dec={target_dec}&fov={target_fov}"
-        )
-        frames_list.append(
-            {
-                "url": frame_url,
-                "mjd": row["mjd"],
-                "date": _mjd_to_iso_date(row["mjd"]),
-                "detector": row["detector"],
-                "wavelength_um": None,
-                "obs_id": row.get("obs_id"),
-            }
+        try:
+            with _irsa_download_semaphore:
+                fits_bytes = spherex.fetch_cutout(
+                    access_url=row["access_url"], ra=target_ra, dec=target_dec, fov=target_fov
+                )
+            array = spherex.aligned_array(fits_bytes, ra=target_ra, dec=target_dec, fov=target_fov)
+        except Exception:
+            continue
+        frames_list.append({"mjd": row["mjd"], "detector": row["detector"], "array": array})
+
+    if not frames_list:
+        raise HTTPException(status_code=502, detail="None of the frames could be retrieved from IRSA.")
+
+    epoch_items: list[EpochItem] = []
+    stacks: list[np.ndarray] = []
+    for e in spherex.build_epochs(frames_list, threshold_days=threshold_days):
+        with warnings.catch_warnings():
+            # Pixels that are NaN in every frame stay NaN; that is expected.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            stack = np.nanmean(np.stack([f["array"] for f in e["frames"]]), axis=0)
+        stacks.append(stack)
+        epoch_items.append(
+            EpochItem(
+                id=f"e{e['epoch_index']}",
+                url=spherex.png_data_uri(spherex.array_to_png(stack, zoom=4)),
+                date_start=e["start_date"],
+                date_end=e["end_date"],
+                mjd_mid=e["mjd_mean"],
+                n_frames=e["frame_count"],
+            )
         )
 
-    raw_epochs = spherex.build_epochs(frames_list, threshold_days=threshold_days)
-
-    epoch_items = [
-        EpochItem(
-            epoch_index=e["epoch_index"],
-            label=e["label"],
-            mjd_start=e["mjd_start"],
-            mjd_end=e["mjd_end"],
-            mjd_mean=e["mjd_mean"],
-            start_date=e["start_date"],
-            end_date=e["end_date"],
-            frame_count=e["frame_count"],
-            detector=e["detector"],
-            frames=[FrameItem(**f) for f in e["frames"]],
+    diff_items = [
+        DiffItem(
+            url=spherex.png_data_uri(spherex.diff_to_png(stacks[i] - stacks[i - 1], zoom=4)),
+            a=epoch_items[i - 1].id,
+            b=epoch_items[i].id,
         )
-        for e in raw_epochs
+        for i in range(1, len(stacks))
     ]
 
     return EpochsResponse(
@@ -345,8 +380,8 @@ def get_epochs(
             fov=target_fov,
         ),
         detector=detector,
-        total_epochs=len(epoch_items),
         epochs=epoch_items,
+        diffs=diff_items,
     )
 
 
@@ -400,6 +435,8 @@ def get_spectrum(
             fov=target_fov,
         ),
         detector=detector,
+        flux_unit=spherex.SPECTRUM_FLUX_UNIT,
+        aperture_arcsec=(2 * spherex.SPECTRUM_APERTURE_RADIUS_PIXELS + 1) * spherex.SPHEREX_PIXEL_SCALE_ARCSEC,
         total_points=len(spectrum_items),
         points=spectrum_items,
     )

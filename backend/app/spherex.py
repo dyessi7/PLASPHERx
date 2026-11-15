@@ -1,3 +1,4 @@
+import base64
 import io
 import logging
 import math
@@ -29,6 +30,13 @@ conf.remote_timeout = settings.IRSA_TIMEOUT_SECONDS
 
 # SPHEREx plate scale: 6.15 arcseconds per pixel
 SPHEREX_PIXEL_SCALE_DEG = 6.15 / 3600.0
+SPHEREX_PIXEL_SCALE_ARCSEC = 6.15
+
+# Solid angle of one pixel in steradians; images are in MJy/sr.
+SPHEREX_PIXEL_SR = math.radians(SPHEREX_PIXEL_SCALE_DEG) ** 2
+
+SPECTRUM_FLUX_UNIT = "mJy"
+SPECTRUM_APERTURE_RADIUS_PIXELS = 2
 
 
 def _mjd_to_iso_date(mjd: float) -> str:
@@ -191,14 +199,11 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
     )
 
 
-def cutout_to_png(
-    fits_bytes: bytes,
-    ra: float,
-    dec: float,
-    fov: float,
-    zoom: int = 4,
-) -> bytes:
-    """PURE PROCESSING: Converts in-memory FITS bytes to an aligned, contrast-stretched PNG image."""
+def aligned_array(fits_bytes: bytes, ra: float, dec: float, fov: float) -> np.ndarray:
+    """PURE PROCESSING: Reprojects a FITS cutout onto a north-up grid centered on (ra, dec)
+
+    and subtracts the local sky background. Returns the float array (row 0 = south).
+    """
     with fits.open(io.BytesIO(fits_bytes)) as hdul:
         datos = hdul[1].data.astype(float)
         hdr = hdul[1].header.copy()
@@ -219,27 +224,63 @@ def cutout_to_png(
     sky_bg = np.nanmedian(alineado)
     if not np.isnan(sky_bg):
         alineado -= sky_bg
+    return alineado
 
-    # 4. Astronomical percentile contrast stretching (5% to 99.5%)
+
+def _encode_png(norm: np.ndarray, zoom: int) -> bytes:
+    """Encodes a 0..1 array (row 0 = south) as a north-up, block-magnified grayscale PNG."""
+    img8 = (np.nan_to_num(norm) * 255.0).astype(np.uint8)
+
+    # Flip vertically for standard astronomical orientation (North Up)
+    img8 = np.flipud(img8)
+
+    # Nearest-neighbor pixel block magnification for crisp web rendering
+    if zoom > 1:
+        img8 = np.kron(img8, np.ones((zoom, zoom), dtype=np.uint8))
+
+    buf = io.BytesIO()
+    imageio.imwrite(buf, img8, format="PNG")
+    return buf.getvalue()
+
+
+def array_to_png(alineado: np.ndarray, zoom: int = 4) -> bytes:
+    """PURE PROCESSING: Percentile contrast stretch (5% to 99.5%) and PNG encoding."""
     lo, hi = np.nanpercentile(alineado, [5.0, 99.5])
     if hi > lo:
         norm = np.clip((alineado - lo) / (hi - lo), 0.0, 1.0)
     else:
         norm = np.zeros_like(alineado)
+    return _encode_png(norm, zoom)
 
-    img8 = (np.nan_to_num(norm) * 255.0).astype(np.uint8)
 
-    # 5. Flip vertically for standard astronomical orientation (North Up)
-    img8 = np.flipud(img8)
+def diff_to_png(diff: np.ndarray, zoom: int = 4) -> bytes:
+    """PURE PROCESSING: Encodes a difference image symmetrically around zero.
 
-    # 6. Nearest-neighbor pixel block magnification for crisp web rendering
-    if zoom > 1:
-        img8 = np.kron(img8, np.ones((zoom, zoom), dtype=np.uint8))
+    Gray = no change, white = brighter, black = fainter.
+    """
+    scale = np.nanpercentile(np.abs(diff), 99.5) if np.isfinite(diff).any() else 0.0
+    if scale > 0:
+        norm = 0.5 + 0.5 * np.clip(diff / scale, -1.0, 1.0)
+    else:
+        norm = np.full_like(diff, 0.5)
+    # NaN pixels (e.g. masked or saturated) show as "no change".
+    return _encode_png(np.where(np.isnan(norm), 0.5, norm), zoom)
 
-    # 7. Encode to PNG in memory
-    buf = io.BytesIO()
-    imageio.imwrite(buf, img8, format="PNG")
-    return buf.getvalue()
+
+def png_data_uri(png_bytes: bytes) -> str:
+    """Wraps PNG bytes as a data URI usable directly as an <img> src."""
+    return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+
+
+def cutout_to_png(
+    fits_bytes: bytes,
+    ra: float,
+    dec: float,
+    fov: float,
+    zoom: int = 4,
+) -> bytes:
+    """PURE PROCESSING: Converts in-memory FITS bytes to an aligned, contrast-stretched PNG image."""
+    return array_to_png(aligned_array(fits_bytes, ra=ra, dec=dec, fov=fov), zoom=zoom)
 
 
 def cutout_wavelength(fits_bytes: bytes | fits.Header, ra: float, dec: float, fobj: Any = None) -> float | None:
@@ -344,7 +385,7 @@ def spectrum_points(
     frames: list[dict[str, Any]],
     ra: float,
     dec: float,
-    aperture_radius_pixels: int = 2,
+    aperture_radius_pixels: int = SPECTRUM_APERTURE_RADIUS_PIXELS,
 ) -> list[dict[str, Any]]:
     """Calculates aperture photometry and spectral points (flux vs wavelength)
 
@@ -378,12 +419,14 @@ def spectrum_points(
 
                 aperture_data = data[y0:y1, x0:x1]
                 sky_bg = float(np.nanmedian(data))
-                flux_val = float(np.nansum(aperture_data - sky_bg))
+                # Surface brightness (MJy/sr) summed over pixels -> flux in mJy
+                to_mjy = SPHEREX_PIXEL_SR * 1e9
+                flux_val = float(np.nansum(aperture_data - sky_bg)) * to_mjy
 
                 # Estimate uncertainty as background std dev * sqrt(area)
                 sky_std = float(np.nanstd(data))
                 area = aperture_data.size
-                flux_err = float(sky_std * math.sqrt(area)) if area > 0 else None
+                flux_err = float(sky_std * math.sqrt(area)) * to_mjy if area > 0 else None
 
             # Wavelength
             lam = f.get("wavelength_um")

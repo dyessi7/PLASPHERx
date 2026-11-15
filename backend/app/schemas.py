@@ -46,28 +46,30 @@ class FramesResponse(BaseModel):
 
 
 class EpochItem(BaseModel):
-    epoch_index: int = Field(..., description="Ordinal number of the observation epoch")
-    label: str = Field(..., description="Human-readable epoch label (e.g., 'Epoch 1 (Jun 2025)')")
-    mjd_start: float = Field(..., description="Starting MJD of the epoch")
-    mjd_end: float = Field(..., description="Ending MJD of the epoch")
-    mjd_mean: float = Field(..., description="Mean MJD of the epoch")
-    start_date: str = Field(..., description="Starting date in ISO format (YYYY-MM-DD)")
-    end_date: str = Field(..., description="Ending date in ISO format (YYYY-MM-DD)")
-    frame_count: int = Field(..., description="Number of frames contained in this epoch")
-    detector: str = Field(..., description="SPHEREx detector identifier")
-    frames: list[FrameItem] = Field(..., description="List of frames within this epoch")
+    id: str = Field(..., description="Epoch identifier (e.g., 'e1')")
+    url: str = Field(..., description="Stacked epoch image as a PNG data URI")
+    date_start: str = Field(..., description="Date of the first frame in the epoch (YYYY-MM-DD)")
+    date_end: str = Field(..., description="Date of the last frame in the epoch (YYYY-MM-DD)")
+    mjd_mid: float = Field(..., description="Mean MJD of the frames in the epoch")
+    n_frames: int = Field(..., description="Number of frames combined into the stack")
+
+
+class DiffItem(BaseModel):
+    url: str = Field(..., description="Difference image (b minus a) as a PNG data URI")
+    a: str = Field(..., description="Earlier epoch id")
+    b: str = Field(..., description="Later epoch id")
 
 
 class EpochsResponse(BaseModel):
     target: TargetBase = Field(..., description="Queried target metadata")
     detector: str = Field(..., description="Analyzed detector")
-    total_epochs: int = Field(..., description="Total number of detected survey epochs")
-    epochs: list[EpochItem] = Field(..., description="List of temporal clusters grouped by epoch")
+    epochs: list[EpochItem] = Field(..., description="Stacked image per observing epoch, in time order")
+    diffs: list[DiffItem] = Field(..., description="Differences between consecutive epochs")
 
 
 class SpectrumPoint(BaseModel):
     wavelength_um: float = Field(..., description="Observed wavelength in micrometers")
-    flux: float = Field(..., description="Integrated flux in the target aperture (net counts)")
+    flux: float = Field(..., description="Background-subtracted flux in the target aperture")
     flux_err: float | None = Field(None, description="Estimated flux uncertainty")
     mjd: float = Field(..., description="Modified Julian Date (MJD)")
     date: str = Field(..., description="Observation date (YYYY-MM-DD)")
@@ -78,6 +80,8 @@ class SpectrumPoint(BaseModel):
 class SpectrumResponse(BaseModel):
     target: TargetBase = Field(..., description="Queried target metadata")
     detector: str = Field(..., description="Analyzed detector")
+    flux_unit: str = Field(..., description="Unit of flux and flux_err (e.g., 'mJy')")
+    aperture_arcsec: float = Field(..., description="Side of the square photometry aperture in arcseconds")
     total_points: int = Field(..., description="Number of spectral points computed")
     points: list[SpectrumPoint] = Field(
         ..., description="Photometric and spectral points sorted by ascending wavelength"
