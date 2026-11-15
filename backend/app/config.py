@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Server Network
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     ALLOWED_METHODS: list[str] = ["GET", "POST", "OPTIONS"]
 
     # Storage & Cache (Portable: defaults to backend/data/cache, configurable via SPHEREX_CACHE_DIR)
@@ -30,16 +30,7 @@ class Settings(BaseSettings):
             os.getenv("SPHEREX_CACHE_DIR", str(BACKEND_DIR / "data" / "cache"))
         )
     )
-    # Location of precomputed target datasets (from notebook 02)
-    PRECOMPUTED_DATA_DIR: Path = Field(
-        default_factory=lambda: Path(
-            os.getenv(
-                "SPHEREX_PRECOMPUTED_DIR",
-                str(PROJECT_ROOT / "frontend" / "public" / "data"),
-            )
-        )
-    )
-    # Raw FITS cache directory (from notebook 01/02 downloads)
+    # Optional local FITS store used to seed the shared cutout cache
     RAW_FITS_DIR: Path = Field(
         default_factory=lambda: Path(
             os.getenv(
@@ -50,7 +41,9 @@ class Settings(BaseSettings):
     )
 
     # Cache TTL & Limits
-    METADATA_CACHE_TTL_SECONDS: int = 86400  # 24 hours
+    METADATA_CACHE_TTL_SECONDS: int = 600  # 10 minutes
+    SEARCH_CACHE_TTL_SECONDS: int = 600  # 10 minutes
+    CACHE_MAX_BYTES: int = 2 * 1024**3
     FRAME_CACHE_MAX_AGE_SECONDS: int = 86400  # HTTP Cache-Control header
 
     # External Services (NASA / IPAC / IRSA)

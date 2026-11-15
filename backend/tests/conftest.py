@@ -6,19 +6,19 @@ from app.main import app
 
 @pytest.fixture(scope="session")
 def client():
-    """Cliente de pruebas HTTP para FastAPI."""
+    """HTTP test client for FastAPI."""
     return TestClient(app)
 
 
 @pytest.fixture(scope="session")
 def sample_fits_file() -> Path:
-    """Retorna la ruta de un archivo FITS real descargado localmente para pruebas."""
+    """Returns the path of a locally cached real FITS file for testing."""
     fits_dir = Path("notebooks/data/spherex_cache/rw_aur")
     if not fits_dir.is_dir():
-        pytest.skip("No se encontró el directorio notebooks/data/spherex_cache/rw_aur")
+        pytest.skip("Test directory notebooks/data/spherex_cache/rw_aur not found")
     
     files = list(fits_dir.glob("*.fits"))
     if not files:
-        pytest.skip("No hay archivos FITS disponibles en el directorio de pruebas")
+        pytest.skip("No FITS files available in test directory")
     
     return files[0]

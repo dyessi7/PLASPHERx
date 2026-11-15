@@ -1,4 +1,3 @@
-import threading
 import warnings
 
 import numpy as np
@@ -7,6 +6,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from app import cache, spherex, targets
 from app.config import get_settings
@@ -42,15 +42,19 @@ app.add_middleware(
     expose_headers=["X-Wavelength-Um", "X-Saturated"],
 )
 
-# Semaphore to control concurrent downloads to IRSA and prevent rate-limiting (429)
-_irsa_download_semaphore = threading.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
-
-
 @app.exception_handler(HTTPException)
 def custom_http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": str(exc.detail)},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Invalid request parameters."},
     )
 
 
@@ -74,7 +78,7 @@ def _resolve_target_and_coordinates(
         target_info = targets.get_target_by_id(target, apply_pm=True)
         if not target_info:
             raise HTTPException(
-                status_code=404,
+                status_code=400,
                 detail=f"Target '{target}' not found in catalog. See /api/targets.",
             )
         resolved_ra = target_info.ra
@@ -150,7 +154,6 @@ def get_targets():
     response_model=FramesResponse,
     responses={
         400: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
@@ -270,9 +273,8 @@ def get_frame(
     else:
         # 2. Fetch and process cutout on the fly
         try:
-            with _irsa_download_semaphore:
-                fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
-                png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
+            fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
+            png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
         except TimeoutError:
             raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
         except Exception as exc:
@@ -296,7 +298,6 @@ def get_frame(
     response_model=EpochsResponse,
     responses={
         400: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
@@ -336,11 +337,12 @@ def get_epochs(
     frames_list = []
     for row in selected:
         try:
-            with _irsa_download_semaphore:
-                fits_bytes = spherex.fetch_cutout(
-                    access_url=row["access_url"], ra=target_ra, dec=target_dec, fov=target_fov
-                )
+            fits_bytes = spherex.fetch_cutout(
+                access_url=row["access_url"], ra=target_ra, dec=target_dec, fov=target_fov
+            )
             array = spherex.aligned_array(fits_bytes, ra=target_ra, dec=target_dec, fov=target_fov)
+        except TimeoutError:
+            raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
         except Exception:
             continue
         frames_list.append({"mjd": row["mjd"], "detector": row["detector"], "array": array})
@@ -394,7 +396,6 @@ def get_epochs(
     response_model=SpectrumResponse,
     responses={
         400: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
     },
@@ -407,7 +408,7 @@ def get_spectrum(
     dec: float | None = Query(None, ge=-90.0, le=90.0, description="Declination in degrees"),
     fov: float | None = Query(None, ge=0.02, le=0.5, description="Field of view in degrees"),
     detector: str = Query(settings.DEFAULT_DETECTOR, description="SPHEREx detector identifier (D1 to D6)"),
-    n: int = Query(16, ge=1, le=settings.MAX_FRAMES, description="Maximum number of observation points to analyze"),
+    n: int = Query(4, ge=1, le=settings.MAX_FRAMES, description="Maximum number of observation points to analyze"),
 ):
     """Consumes spectrum_points to calculate aperture photometry and wavelength for each observation at the target."""
     if detector not in settings.ALLOWED_DETECTORS:
@@ -427,7 +428,14 @@ def get_spectrum(
         raise HTTPException(status_code=502, detail=f"Failed to query IRSA: {exc}")
 
     # Extract photometric and spectral points
-    raw_points = spherex.spectrum_points(selected, ra=target_ra, dec=target_dec)
+    try:
+        raw_points = spherex.spectrum_points(
+            selected, ra=target_ra, dec=target_dec, fov=target_fov
+        )
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to calculate spectrum: {exc}")
 
     spectrum_items = [SpectrumPoint(**p) for p in raw_points]
 
