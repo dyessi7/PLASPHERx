@@ -1,15 +1,19 @@
-# Usamos una imagen oficial de Python ligera
 FROM python:3.11-slim
 
-# Directorio de trabajo dentro del contenedor
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Copiamos e instalamos las dependencias necesarias
-COPY src/requirements.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiamos el resto del código del proyecto
-COPY . .
+COPY app/ ./app/
 
-# Comando por defecto para ejecutar tu script principal
-CMD ["python", "src/main.py"]
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
