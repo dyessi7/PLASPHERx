@@ -1,0 +1,122 @@
+{
+ "target": {
+  "name": "r_dra",
+  "ra": 248.1675,
+  "dec": 66.755,
+  "fov": 0.1
+ },
+ "frames": [
+  {
+   "url": "frames/D2_00.png",
+   "mjd": 60834.788,
+   "date": "2025-06-08",
+   "detector": "D2",
+   "wavelength_um": 1.4047
+  },
+  {
+   "url": "frames/D2_01.png",
+   "mjd": 60836.758,
+   "date": "2025-06-10",
+   "detector": "D2",
+   "wavelength_um": 1.2776
+  },
+  {
+   "url": "frames/D2_02.png",
+   "mjd": 60851.57,
+   "date": "2025-06-25",
+   "detector": "D2",
+   "wavelength_um": 1.3474
+  },
+  {
+   "url": "frames/D2_03.png",
+   "mjd": 60851.573,
+   "date": "2025-06-25",
+   "detector": "D2",
+   "wavelength_um": 1.4118
+  },
+  {
+   "url": "frames/D2_04.png",
+   "mjd": 60857.686,
+   "date": "2025-07-01",
+   "detector": "D2",
+   "wavelength_um": 1.1618
+  },
+  {
+   "url": "frames/D2_05.png",
+   "mjd": 60858.909,
+   "date": "2025-07-02",
+   "detector": "D2",
+   "wavelength_um": 1.2766
+  },
+  {
+   "url": "frames/D2_06.png",
+   "mjd": 61007.582,
+   "date": "2025-11-28",
+   "detector": "D2",
+   "wavelength_um": 1.5512
+  },
+  {
+   "url": "frames/D2_07.png",
+   "mjd": 61009.483,
+   "date": "2025-11-30",
+   "detector": "D2",
+   "wavelength_um": 1.108
+  },
+  {
+   "url": "frames/D2_08.png",
+   "mjd": 61011.247,
+   "date": "2025-12-02",
+   "detector": "D2",
+   "wavelength_um": 1.3065
+  },
+  {
+   "url": "frames/D2_09.png",
+   "mjd": 61019.875,
+   "date": "2025-12-10",
+   "detector": "D2",
+   "wavelength_um": 1.4739
+  },
+  {
+   "url": "frames/D2_10.png",
+   "mjd": 61021.364,
+   "date": "2025-12-12",
+   "detector": "D2",
+   "wavelength_um": 1.1851
+  },
+  {
+   "url": "frames/D2_11.png",
+   "mjd": 61021.498,
+   "date": "2025-12-12",
+   "detector": "D2",
+   "wavelength_um": 1.2714
+  },
+  {
+   "url": "frames/D2_12.png",
+   "mjd": 61023.739,
+   "date": "2025-12-14",
+   "detector": "D2",
+   "wavelength_um": 1.3955
+  },
+  {
+   "url": "frames/D2_13.png",
+   "mjd": 61212.618,
+   "date": "2026-06-21",
+   "detector": "D2",
+   "wavelength_um": 1.4542
+  },
+  {
+   "url": "frames/D2_14.png",
+   "mjd": 61214.112,
+   "date": "2026-06-23",
+   "detector": "D2",
+   "wavelength_um": 1.229
+  },
+  {
+   "url": "frames/D2_15.png",
+   "mjd": 61214.454,
+   "date": "2026-06-23",
+   "detector": "D2",
+   "wavelength_um": 1.2006
+  }
+ ]
+}
