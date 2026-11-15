@@ -1,14 +1,15 @@
-/* Theme tokens and global defaults. Dark, sober, scientific-tool look. */
+/* Theme tokens and global defaults. Pure black, neutral grays, scientific-tool look. */
 
 :root {
-  --bg: #0d1014;
-  --surface: #151a20;
-  --surface-2: #1d232b;
-  --border: #2c343e;
-  --text: #e4e8ed;
-  --text-muted: #9aa5b1;
-  --accent: #6cb6ff;
-  --accent-strong: #a5d2ff;
+  --bg: #000;
+  --surface: #0a0a0a;
+  --surface-2: #171717;
+  --border: #262626;
+  --text: #ededed;
+  --text-muted: #a1a1a1;
+  --accent: #52a8ff;
+  --accent-strong: #8cc4ff;
+  --selected: #50e3c2;
   --danger: #ff8a80;
   --warning: #ffd479;
   --focus: #ffd479;

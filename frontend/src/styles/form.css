@@ -65,7 +65,7 @@
 }
 
 .field input::placeholder {
-  color: #6b7682;
+  color: #737373;
 }
 
 .field input[aria-invalid='true'] {
@@ -128,6 +128,28 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* The target whose coordinates are currently shown. */
+.target-button[aria-pressed='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--selected);
+  background: rgba(80, 227, 194, 0.08);
+  color: var(--selected);
+}
+
+.target-button[aria-pressed='true']::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--selected);
+}
+
+.target-button[aria-pressed='true']:hover:not(:disabled) {
+  border-color: var(--selected);
 }
 
 @media (max-width: 640px) {

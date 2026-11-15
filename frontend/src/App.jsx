@@ -119,7 +119,7 @@ export default function App() {
           disabled={!API_CONFIGURED}
         />
 
-        <TargetButtons onSelect={handleTargetSelect} disabled={!API_CONFIGURED} />
+        <TargetButtons onSelect={handleTargetSelect} disabled={!API_CONFIGURED} current={query} />
 
         {query ? (
           <section className="results panel" aria-labelledby="results-title">

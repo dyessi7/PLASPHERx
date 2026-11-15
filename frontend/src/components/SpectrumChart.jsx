@@ -12,8 +12,8 @@ import {
 } from 'recharts'
 import { DETECTOR_COLORS, DETECTOR_IDS } from '../constants.js'
 
-const AXIS_COLOR = '#9aa5b1'
-const GRID_COLOR = '#2c343e'
+const AXIS_COLOR = '#a1a1a1'
+const GRID_COLOR = '#262626'
 
 function formatNumber(value, digits = 3) {
   return typeof value === 'number' ? value.toPrecision(digits) : '—'
@@ -112,7 +112,7 @@ export default function SpectrumChart({ spectrum }) {
                 <Legend
                   verticalAlign="top"
                   height={32}
-                  formatter={(value) => <span style={{ color: '#e4e8ed' }}>{value}</span>}
+                  formatter={(value) => <span style={{ color: '#ededed' }}>{value}</span>}
                 />
                 {series.map((s) => (
                   <Scatter
@@ -120,7 +120,7 @@ export default function SpectrumChart({ spectrum }) {
                     name={s.id}
                     data={s.points}
                     fill={DETECTOR_COLORS[s.id]}
-                    stroke="#151a20"
+                    stroke="#0a0a0a"
                     strokeWidth={2}
                     isAnimationActive={false}
                   >
