@@ -1,10 +1,15 @@
 import hashlib
 import json
+import logging
+import threading
 import time
 from pathlib import Path
+from typing import Any
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+_cache_write_lock = threading.Lock()
 
 FRAMES_DIR = settings.CACHE_DIR / "frames"
 METADATA_DIR = settings.CACHE_DIR / "metadata"
@@ -47,20 +52,59 @@ def get_cache_stats() -> dict[str, int]:
 
 def make_frame_key(src: str, ra: float, dec: float, fov: float) -> str:
     """Generates a deterministic SHA-256 key for a specific cropped PNG frame."""
-    raw = f"png|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
+    raw = json.dumps(["png", src, ra, dec, fov], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def make_cutout_key(src: str, ra: float, dec: float, fov: float) -> str:
     """Generates a deterministic SHA-256 key for a raw FITS cutout from IRSA."""
-    raw = f"fits|{src}|{ra:.6f}|{dec:.6f}|{fov:.4f}"
+    raw = json.dumps(["fits", src, ra, dec, fov], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def make_query_key(ra: float, dec: float, fov: float, detector: str, n: int) -> str:
     """Generates a deterministic SHA-256 key for a frame metadata query."""
-    raw = f"query|{ra:.5f}|{dec:.5f}|{fov:.4f}|{detector}|{n}"
+    raw = json.dumps(["query", ra, dec, fov, detector, n], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def make_search_key(ra: float, dec: float) -> str:
+    """Generates a deterministic key for an IRSA image search."""
+    raw = json.dumps(["search", ra, dec], separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _cache_files() -> list[Path]:
+    return (
+        list(FRAMES_DIR.glob("*.png"))
+        + list(METADATA_DIR.glob("*.json"))
+        + list(FITS_DIR.glob("*.fits"))
+    )
+
+
+def _save_cache_file(directory: Path, filename: str, data: bytes) -> None:
+    path = directory / filename
+    max_bytes = settings.CACHE_MAX_BYTES
+    if len(data) > max_bytes:
+        logger.warning("Skipping cache entry larger than SPHEREX_CACHE_MAX_BYTES: %s", path)
+        return
+
+    with _cache_write_lock:
+        try:
+            files = _cache_files()
+            sizes = {item: item.stat().st_size for item in files}
+            total_size = sum(sizes.values()) - sizes.get(path, 0)
+            for oldest in sorted(files, key=lambda item: item.stat().st_mtime):
+                if total_size + len(data) <= max_bytes:
+                    break
+                if oldest == path:
+                    continue
+                size = sizes[oldest]
+                oldest.unlink()
+                total_size -= size
+            path.write_bytes(data)
+        except OSError as exc:
+            logger.warning("Unable to update cache entry %s: %s", path, exc)
 
 
 def get_cached_frame(key: str) -> bytes | None:
@@ -69,18 +113,15 @@ def get_cached_frame(key: str) -> bytes | None:
     if path.is_file():
         try:
             return path.read_bytes()
-        except OSError:
+        except OSError as exc:
+            logger.warning("Unable to read cached frame %s: %s", path, exc)
             return None
     return None
 
 
 def save_cached_frame(key: str, data: bytes) -> None:
     """Saves processed PNG frame bytes to disk cache."""
-    path = FRAMES_DIR / f"{key}.png"
-    try:
-        path.write_bytes(data)
-    except OSError:
-        pass
+    _save_cache_file(FRAMES_DIR, f"{key}.png", data)
 
 
 def get_cached_fits(key: str) -> bytes | None:
@@ -89,21 +130,18 @@ def get_cached_fits(key: str) -> bytes | None:
     if path.is_file():
         try:
             return path.read_bytes()
-        except OSError:
+        except OSError as exc:
+            logger.warning("Unable to read cached FITS %s: %s", path, exc)
             return None
     return None
 
 
 def save_cached_fits(key: str, data: bytes) -> None:
     """Saves raw FITS cutout bytes to disk cache."""
-    path = FITS_DIR / f"{key}.fits"
-    try:
-        path.write_bytes(data)
-    except OSError:
-        pass
+    _save_cache_file(FITS_DIR, f"{key}.fits", data)
 
 
-def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> dict | None:
+def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> Any | None:
     """Retrieves cached JSON metadata if not expired by TTL."""
     if max_age_seconds is None:
         max_age_seconds = settings.METADATA_CACHE_TTL_SECONDS
@@ -120,14 +158,16 @@ def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> dict | 
 
         content = path.read_text(encoding="utf-8")
         return json.loads(content)
-    except Exception:
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Unable to read cached metadata %s: %s", path, exc)
         return None
 
 
-def save_cached_metadata(key: str, data: dict) -> None:
-    """Saves a serializable dictionary as JSON in metadata cache."""
-    path = METADATA_DIR / f"{key}.json"
+def save_cached_metadata(key: str, data: Any) -> None:
+    """Saves serializable JSON data in metadata cache."""
     try:
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+        encoded = json.dumps(data, indent=2).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        logger.warning("Unable to serialize metadata cache entry %s: %s", key, exc)
+        return
+    _save_cache_file(METADATA_DIR, f"{key}.json", encoded)

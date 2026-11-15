@@ -1,279 +1,155 @@
-# 🔭 SPHEREx Sky Viewer - Backend API
+# SPHEREx Sky Viewer — Backend API
 
-Backend de alto rendimiento construido con **FastAPI**, **Pydantic** y el stack astronómico de Python (**Astropy**, **Reproject**, **Astroquery**) para la ingesta, alineación, animación temporal y visualización de datos espectroscópicos de la misión **NASA SPHEREx**.
+API FastAPI que busca observaciones de SPHEREx en IRSA y genera recortes,
+animaciones, épocas y puntos de espectro bajo demanda. El backend no sirve
+imágenes ni respuestas precalculadas como archivos estáticos: las vistas se
+generan desde la API para cualquier coordenada.
 
----
+## Datos y caché
 
-## 🚀 Características Principales
+- `GET /api/frames` consulta el catálogo SIA de IRSA. La respuesta de búsqueda
+  se conserva 10 minutos y los metadatos de la secuencia también se reutilizan
+  durante 10 minutos.
+- `GET /api/frame` descarga con `fetch_cutout` el FITS del recorte solicitado.
+  Los bytes se guardan en disco con una clave SHA-256 de
+  `(access_url, ra, dec, fov)`. Una misma descarga concurrente comparte el
+  resultado, y `/api/epochs` y `/api/spectrum` vuelven a usar esos mismos FITS.
+- Los PNG procesados también se cachean. La caché conjunta de FITS, PNG y
+  metadatos tiene un límite predeterminado de 2 GiB; al necesitar espacio,
+  elimina primero las entradas más antiguas. Los recortes mayores que el límite
+  no se guardan.
+- Un semáforo limita a tres las descargas simultáneas a IRSA. El contenedor se
+  ejecuta con un worker para que ese límite se aplique a todas sus peticiones.
+- En Docker, monta un volumen persistente en `/app/data/cache` para conservar
+  la caché entre reinicios. En otros entornos configura `SPHEREX_CACHE_DIR` a
+  una ruta persistente.
 
-* **Pipeline Científico Preciso:** Reproyección WCS (`reproject_interp`), sustracción de fondo astronómico, contraste por percentiles (Z-Scale) y extracción de longitudes de onda en micrómetros.
-* **Modo Híbrido de Alto Rendimiento:**
-  * **Instantáneo:** Entrega inmediata de secuencias precalculadas para los objetivos principales del catálogo (*R Draconis, Barnard's Star, WISE 0855, RW Aurigae, Epsilon Indi*).
-  * **On-Demand:** Búsqueda y recorte dinámico sobre los archivos FITS de IRSA/IPAC para cualquier coordenada del cielo.
-* **Caché Inteligente de Doble Nivel:** Almacena tanto los metadatos SIA como las imágenes PNG procesadas, evitando saturar los servidores de la NASA con consultas redundantes.
-* **Control de Concurrencia y Resiliencia:** Semáforo de descargas y políticas de reintento (*exponential backoff*) para evitar bloqueos por *rate-limiting* (`429 / ConnectionReset`).
-* **Soporte de Movimiento Propio (*Proper Motion*):** Corrección cinemática automática de coordenadas J2000 hacia la época de observación (2025–2026).
-* **Documentación Interactiva Automática:** Esquemas OpenAPI 3.1 disponibles en `/docs` (Swagger UI) y `/redoc`.
+No hay coordenadas con una caché o conjunto de imágenes especial: las claves
+dependen de la URL y las coordenadas del recorte. El catálogo de
+`GET /api/targets` solo proporciona sugerencias y metadatos de objetivos.
 
----
+## Configuración
 
-## 📂 Estructura del Backend
+Todas las variables usan el prefijo `SPHEREX_`. Se pueden definir en el entorno
+o en `backend/.env`; `backend/.env.example` contiene una plantilla.
+
+| Variable | Predeterminado | Descripción |
+| --- | --- | --- |
+| `SPHEREX_HOST` | `0.0.0.0` | Dirección de escucha |
+| `SPHEREX_PORT` | `8000` | Puerto HTTP |
+| `SPHEREX_CORS_ORIGINS` | `["http://localhost:5173","http://127.0.0.1:5173"]` | Orígenes web permitidos, como una lista JSON |
+| `SPHEREX_CACHE_DIR` | `backend/data/cache` | Caché persistente de FITS, PNG y metadatos |
+| `SPHEREX_CACHE_MAX_BYTES` | `2147483648` | Tamaño máximo total de caché en bytes |
+| `SPHEREX_METADATA_CACHE_TTL_SECONDS` | `600` | TTL de metadatos de secuencias |
+| `SPHEREX_SEARCH_CACHE_TTL_SECONDS` | `600` | TTL de búsquedas SIA de IRSA |
+| `SPHEREX_IRSA_TIMEOUT_SECONDS` | `60` | Timeout de acceso a IRSA |
+| `SPHEREX_IRSA_MAX_RETRIES` | `4` | Reintentos de descargas |
+| `SPHEREX_MAX_CONCURRENT_DOWNLOADS` | `3` | Descargas simultáneas permitidas |
+| `SPHEREX_DEFAULT_DETECTOR` | `D2` | Detector por defecto (`D1`–`D6`) |
+| `SPHEREX_DEFAULT_FOV` | `0.1` | Campo de visión por defecto, en grados |
+| `SPHEREX_MAX_FRAMES` | `24` | Máximo de cuadros/puntos por petición |
+
+Para producción, añade el **origen** del frontend desplegado a
+`SPHEREX_CORS_ORIGINS`, conservando localhost para desarrollo. Por ejemplo:
 
 ```text
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── config.py         # Configuración centralizada y lectura de variables de entorno (BaseSettings)
-│   ├── schemas.py        # Modelos Pydantic para tipado estricto de Request y Response
-│   ├── cache.py          # Manejo de caché en disco (frames PNG y metadatos JSON)
-│   ├── spherex.py        # Pipeline astronómico (IRSA SIA, WCS, reproyección y contrastes)
-│   └── main.py           # Instancia principal de FastAPI, middlewares y rutas de la API
-├── data/
-│   └── cache/            # Directorio local persistente para recortes e índices
-│       ├── frames/       # Imágenes procesadas en formato PNG
-│       └── metadata/     # Metadatos cacheados de consultas SIA
-├── Dockerfile            # Configuración para despliegue en contenedores Docker
-├── requirements.txt      # Dependencias fijadas del proyecto
-├── .env.example          # Plantilla de variables de entorno
-└── README.md             # Esta documentación
+SPHEREX_CORS_ORIGINS=["https://mi-frontend.example.com","http://localhost:5173","http://127.0.0.1:5173"]
 ```
 
----
+La API permite al navegador leer `X-Wavelength-Um` mediante
+`Access-Control-Expose-Headers`.
 
-## ⚙️ Configuración y Variables de Entorno
+## API
 
-El backend utiliza `pydantic-settings` para cargar configuraciones desde variables de entorno o un archivo `.env` en la raíz de `backend/`. Todas las variables cuentan con el prefijo `SPHEREX_`:
+Las rutas de consulta aceptan coordenadas `ra` `[0, 360]`, `dec` `[-90, 90]`,
+`fov` `[0.02, 0.5]`, detector `D1`–`D6` y `n` `[1, 24]`. También se puede usar
+`target` en lugar de `ra` y `dec` para resolver un ID de `/api/targets`.
+Parámetros inválidos o IDs desconocidos devuelven HTTP 400. Los errores se
+devuelven como `{"error":"mensaje en inglés"}`; fallos de IRSA/procesamiento
+usan 502 y timeouts usan 504.
 
-| Variable | Tipo | Valor por Defecto | Descripción |
-| :--- | :--- | :--- | :--- |
-| `SPHEREX_DEBUG` | `bool` | `False` | Habilita logs detallados de desarrollo |
-| `SPHEREX_PORT` | `int` | `8000` | Puerto HTTP del servidor |
-| `SPHEREX_HOST` | `str` | `"0.0.0.0"` | Interfaz de red de enlace |
-| `SPHEREX_CORS_ORIGINS` | `list` | `["*"]` | Lista de dominios autorizados para CORS |
-| `SPHEREX_CACHE_DIR` | `Path` | `./data/cache` | Ruta del directorio persistente de caché |
-| `SPHEREX_PRECOMPUTED_DIR` | `Path` | `../frontend/public/data` | Ruta de datasets precalculados |
-| `SPHEREX_IRSA_TIMEOUT_SECONDS` | `float` | `60.0` | Timeout máximo para peticiones a IRSA |
-| `SPHEREX_MAX_CONCURRENT_DOWNLOADS` | `int` | `3` | Límite de descargas simultáneas a IRSA |
-| `SPHEREX_DEFAULT_DETECTOR` | `str` | `"D2"` | Detector por defecto (D1 a D6) |
-| `SPHEREX_DEFAULT_FOV` | `float` | `0.1` | Campo de visión por defecto en grados |
-| `SPHEREX_MAX_FRAMES` | `int` | `24` | Límite máximo de cuadros por secuencia |
+### `GET /api/health`
 
----
+Estado del servicio, permisos de escritura y conteos de las tres cachés.
 
-## 📡 Especificación de la API
+### `GET /api/targets`
 
-### 1. `GET /api/health`
-Verifica el estado del servicio, detecta permisos de escritura en la caché y reporta qué objetivos precalculados están listos para servirse.
-* **Respuesta 200:**
-  ```json
-  {
-    "status": "ok",
-    "version": "0.1.0",
-    "cache_dir": "/app/data/cache",
-    "cache_writable": true,
-    "precomputed_targets": ["r_dra", "barnard"]
-  }
-  ```
+Catálogo de objetivos sugeridos. No proporciona imágenes ni secuencias
+precalculadas.
 
-### 2. `GET /api/targets`
-Devuelve el catálogo de objetivos destacados del reto con sus datos cinemáticos corregidos por movimiento propio a 2026 y el indicador `is_precomputed`.
-* **Respuesta 200:**
-  ```json
-  {
-    "targets": [
-      {
-        "id": "r_dra",
-        "name": "R Draconis",
-        "description": "Estrella variable gigante roja tipo Mira con variación periódica de brillo.",
-        "target_type": "variable_star",
-        "ra": 248.1675,
-        "dec": 66.7550,
-        "fov": 0.1,
-        "pmra": 0.0,
-        "pmdec": 0.0,
-        "epoch": 2000.0,
-        "is_precomputed": true
-      },
-      {
-        "id": "barnard",
-        "name": "Barnard's Star",
-        "description": "Enana roja cercana con el mayor movimiento propio conocido (10.3 arcsec/año).",
-        "target_type": "high_proper_motion",
-        "ra": 269.446268,
-        "dec": 4.768227,
-        "fov": 0.1,
-        "pmra": -802.0,
-        "pmdec": 10362.0,
-        "epoch": 2000.0,
-        "is_precomputed": false
-      }
-    ],
-    "total": 5
-  }
-  ```
+### `GET /api/frames?ra=&dec=&fov=&detector=D2&n=16`
 
-### 3. `GET /api/frames`
-Obtiene la secuencia temporal de observaciones para una posición dada.
-* **Parámetros de consulta (Query Params):**
-  * `ra` *(float, obligatorio)*: Ascensión Recta en grados `[0.0, 360.0]`.
-  * `dec` *(float, obligatorio)*: Declinación en grados `[-90.0, 90.0]`.
-  * `fov` *(float, opcional, default: `0.1`)*: Campo de visión en grados `[0.02, 0.5]`.
-  * `detector` *(string, opcional, default: `"D2"`)*: Detector SPHEREx (`D1` a `D6`).
-  * `n` *(int, opcional, default: `16`)*: Número de cuadros temporales `[1, 24]`.
-* **Respuesta 200:**
-  ```json
-  {
-    "target": {
-      "name": "custom_248.1675_66.7550",
-      "ra": 248.1675,
-      "dec": 66.7550,
-      "fov": 0.1
-    },
-    "frames": [
-      {
-        "url": "http://localhost:8000/api/frame?src=...&ra=248.1675&dec=66.7550&fov=0.1",
-        "mjd": 60814.46,
-        "date": "2025-05-19",
-        "detector": "D2",
-        "wavelength_um": 2.415,
-        "obs_id": "spherex_obs_01"
-      }
-    ],
-    "total_frames": 16,
-    "source": "irsa"
-  }
-  ```
+Busca observaciones y devuelve los cuadros ordenados temporalmente. Cada cuadro
+incluye `url`, `mjd`, `date`, `detector` y `wavelength_um` (inicialmente
+`null`). `url` apunta a `/api/frame`.
 
-### 4. `GET /api/frame`
-Descarga, alinea y genera la imagen PNG individual para un cuadro dado.
-* **Parámetros:** `src` (URL oficial de IRSA codificada), `ra`, `dec`, `fov`.
-* **Respuesta:** Imagen binaria con cabeceras HTTP de caché (`image/png`, `Cache-Control: public, max-age=86400`).
+### `GET /api/frame?src=&ra=&dec=&fov=`
 
-### 5. `GET /api/epochs`
-Agrupa las observaciones temporales en épocas astronómicas (*surveys* o pasadas semestrales de SPHEREx) utilizando `build_epochs`.
-* **Parámetros:** `target` (o `ra` y `dec`), `detector` (default `"D2"`), `threshold_days` (default `45.0`).
-* **Respuesta 200:**
-  ```json
-  {
-    "target": {
-      "name": "RW Aurigae",
-      "ra": 76.95642,
-      "dec": 30.40142,
-      "fov": 0.1
-    },
-    "detector": "D2",
-    "total_epochs": 2,
-    "epochs": [
-      {
-        "epoch_index": 1,
-        "label": "Época 1 (Jun 2025)",
-        "mjd_start": 60834.788,
-        "mjd_end": 60858.909,
-        "mjd_mean": 60846.85,
-        "start_date": "2025-06-08",
-        "end_date": "2025-07-02",
-        "frame_count": 6,
-        "detector": "D2",
-        "frames": [ ... ]
-      }
-    ]
-  }
-  ```
+Descarga o reutiliza el FITS, lo alinea y devuelve `image/png`. `src` debe
+empezar por `https://irsa.ipac.caltech.edu/`. La respuesta incluye
+`Cache-Control` y, cuando se puede extraer del FITS, `X-Wavelength-Um`.
 
-### 6. `GET /api/spectrum`
-Calcula puntos de fotometría de apertura y espectro astronómico ($F(\lambda)$ vs longitud de onda) utilizando `spectrum_points`.
-* **Parámetros:** `target` (o `ra` y `dec`), `detector` (default `"D2"`), `n` (máx cuadros a procesar).
-* **Respuesta 200:**
-  ```json
-  {
-    "target": {
-      "name": "RW Aurigae",
-      "ra": 76.95642,
-      "dec": 30.40142,
-      "fov": 0.1
-    },
-    "detector": "D2",
-    "total_points": 6,
-    "points": [
-      {
-        "wavelength_um": 1.0941,
-        "flux": 266.2257,
-        "flux_err": 12.4312,
-        "mjd": 60834.788,
-        "date": "2025-06-08",
-        "detector": "D2",
-        "obs_id": "spherex_obs_01"
-      }
-    ]
-  }
-  ```
+### `GET /api/epochs?ra=&dec=&fov=&detector=D2&n=16`
 
----
+Usa la misma selección de observaciones que `/api/frames`, reutiliza los FITS
+cacheados y devuelve `{target, detector, epochs, diffs}`. Las imágenes de
+épocas y diferencias son URI `data:image/png;base64,...`; no requieren otra
+ruta ni guardado de estado.
 
-## 🛠️ Puesta en Marcha Local
+### `GET /api/spectrum?ra=&dec=&fov=&detector=D3&n=4`
 
-### Prerrequisitos
-* Python 3.11 o 3.12 instalado.
-* Entorno virtual activo.
+Procesa un solo detector por llamada y devuelve `{target, detector, flux_unit,
+aperture_arcsec, points}`. El valor predeterminado es `n=4`; la interfaz puede
+hacer llamadas separadas para los detectores que quiera graficar.
 
-### 1. Instalación de dependencias
-```bash
+Épocas y espectro están implementados en este backend. Si una futura
+instalación no tiene disponible la implementación científica correspondiente,
+la ruta debe responder HTTP 501 con `{"error":"Not available yet"}`.
+
+## Desarrollo local
+
+Requiere Python 3.11 o 3.12.
+
+```powershell
 cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-### 2. Ejecución del servidor
-Desde la carpeta raíz del proyecto:
-```bash
-# Windows PowerShell
-$env:PYTHONPATH="backend"
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-O directamente desde la carpeta `backend`:
-```bash
-cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 3. Explorar la documentación interactiva
-* Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-* Redoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+Swagger: `http://localhost:8000/docs` · Redoc: `http://localhost:8000/redoc`.
+Desde la raíz del proyecto, también se puede arrancar con
+`$env:PYTHONPATH="backend"; uvicorn app.main:app --reload --port 8000`.
 
----
+## Pruebas
 
-## 🧪 Pruebas Automatizadas (Pytest)
+Desde `backend/`:
 
-El backend cuenta con una suite completa de pruebas unitarias y de integración que validan el catálogo, la cinemática astronómica, el pipeline de reproyección FITS/PNG, los endpoints de épocas y espectro, y la protección contra ataques SSRF.
-
-Para ejecutar todas las pruebas:
-```bash
-# Desde la raíz del repositorio
-pytest backend/tests -v
-
-# O desde la carpeta backend/
-cd backend
+```powershell
 pytest -v
 ```
 
----
+Algunas pruebas de integración requieren FITS locales en
+`notebooks/data/spherex_cache/rw_aur`; se omiten si no están disponibles.
 
-## 🐳 Ejecución con Docker
+## Docker y URL pública
 
-El `Dockerfile` está optimizado para entornos de producción con usuario sin privilegios (`appuser`), verificación periódica de salud (`HEALTHCHECK`) y volumen persistente de caché.
+Desde la raíz del proyecto:
 
-Para construir y desplegar el contenedor:
-```bash
-# Construir la imagen
-docker build -t spherex-backend ./backend
-
-# Ejecutar el contenedor mapeando el puerto y persistiendo la caché
-docker run -d -p 8000:8000 -v spherex_cache:/app/data/cache --name spherex-api spherex-backend
+```powershell
+docker build -t spherex-backend .\backend
+docker run --rm -p 8000:8000 -v spherex_cache:/app/data/cache spherex-backend
 ```
 
----
+El backend no incluye una URL de producción ni una configuración de proveedor
+de despliegue en este repositorio, así que todavía no hay una URL pública que
+poner en `VITE_API_URL`. Después de desplegar el contenedor, usa la URL HTTPS
+asignada por el proveedor (sin `/api` ni barra final), por ejemplo:
 
-## 🧪 Calidad de Código y Arquitectura
+```text
+VITE_API_URL=https://<dominio-publico-del-backend>
+```
 
-* **Separación de Responsabilidades:** El controlador web (`main.py`) no conoce los detalles de astrometría; delega la ciencia en `spherex.py` y el almacenamiento en `cache.py`.
-* **Zero Trust en Entradas Externas:** Toda coordenada, FOV y URL externa pasa por validación estricta de rangos para evitar ataques de inyección o SSRF.
-* **Persistencia Portátil:** Rutas dinámicas mediante `pathlib.Path` que funcionan sin cambios en Windows, macOS y entornos Linux de producción.
+Configura ese dominio del frontend en `SPHEREX_CORS_ORIGINS` del backend y
+mantén un volumen persistente para `/app/data/cache`.

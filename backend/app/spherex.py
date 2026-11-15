@@ -1,13 +1,15 @@
 import base64
+from contextlib import contextmanager
 import io
 import logging
 import math
+import threading
 import time
 import urllib.error
 import http.client
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 import imageio.v2 as imageio
@@ -37,6 +39,9 @@ SPHEREX_PIXEL_SR = math.radians(SPHEREX_PIXEL_SCALE_DEG) ** 2
 
 SPECTRUM_FLUX_UNIT = "mJy"
 SPECTRUM_APERTURE_RADIUS_PIXELS = 2
+_irsa_download_semaphore = threading.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
+_cutout_locks_guard = threading.Lock()
+_cutout_locks: dict[str, tuple[Any, int]] = {}
 
 
 def _mjd_to_iso_date(mjd: float) -> str:
@@ -45,45 +50,43 @@ def _mjd_to_iso_date(mjd: float) -> str:
     return datetime.fromtimestamp(unix_seconds, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def _is_timeout_error(error: BaseException) -> bool:
+    if isinstance(error, TimeoutError) or "timeout" in type(error).__name__.lower():
+        return True
+    cause = error.__cause__ or error.__context__ or getattr(error, "reason", None)
+    return cause is not None and cause is not error and _is_timeout_error(cause)
+
+
 def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
+    """Returns IRSA SIA results from a shared, ten-minute disk cache."""
+    key = cache.make_search_key(ra, dec)
+    cached = cache.get_cached_metadata(key, settings.SEARCH_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    try:
+        rows = _search_images_uncached(ra, dec)
+    except Exception as exc:
+        if _is_timeout_error(exc):
+            raise TimeoutError("IRSA image search timed out.") from exc
+        raise
+    cache.save_cached_metadata(key, rows)
+    return rows
+
+
+def _search_images_uncached(ra: float, dec: float) -> list[dict[str, Any]]:
     """Queries available images in IRSA SIA (SPHEREx DR1 and QR3)
 
     for given coordinates, sorted chronologically.
     """
     coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
-    try:
-        from astroquery.ipac.irsa import Irsa
+    from astroquery.ipac.irsa import Irsa
 
-        res = Irsa.query_sia(
-            pos=(coord, 1 * u.arcsec),
-            collection=["spherex_dr1", "spherex_qr3"],
-        )
-        table = res.to_table() if hasattr(res, "to_table") else res
-    except Exception as irsa_err:
-        # Fallback: Check if coordinates match a local target with manifest.csv
-        from app import targets
-
-        matched = targets.find_target_by_coords(ra, dec, tolerance_deg=0.05)
-        if matched:
-            local_manifest = settings.RAW_FITS_DIR / matched.id / "manifest.csv"
-            if local_manifest.is_file():
-                import pandas as pd
-
-                df = pd.read_csv(local_manifest)
-                rows = []
-                for _, r in df.iterrows():
-                    rows.append(
-                        {
-                            "obs_id": str(r.get("archivo", "")).replace(".fits", ""),
-                            "access_url": str(r["url"]),
-                            "mjd": float(r["mjd"]),
-                            "detector": str(r["detector"]).split("-")[-1],
-                            "collection": str(r.get("coleccion", "spherex_local")),
-                        }
-                    )
-                rows.sort(key=lambda x: x["mjd"])
-                return rows
-        raise irsa_err
+    res = Irsa.query_sia(
+        pos=(coord, 1 * u.arcsec),
+        collection=["spherex_dr1", "spherex_qr3"],
+    )
+    table = res.to_table() if hasattr(res, "to_table") else res
 
     if len(table) == 0:
         return []
@@ -149,7 +152,36 @@ def _find_local_fits(access_url: str) -> Path | None:
     return None
 
 
+@contextmanager
+def _cutout_lock(key: str) -> Iterator[None]:
+    with _cutout_locks_guard:
+        existing = _cutout_locks.get(key)
+        lock, users = existing if existing is not None else (threading.Lock(), 0)
+        _cutout_locks[key] = (lock, users + 1)
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        with _cutout_locks_guard:
+            _, users = _cutout_locks[key]
+            if users == 1:
+                del _cutout_locks[key]
+            else:
+                _cutout_locks[key] = (lock, users - 1)
+
+
 def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
+    """Fetches a cutout once per key, sharing cached FITS across all API views."""
+    key = cache.make_cutout_key(access_url, ra=ra, dec=dec, fov=fov)
+    with _cutout_lock(key):
+        cached_fits_bytes = cache.get_cached_fits(key)
+        if cached_fits_bytes is not None:
+            return cached_fits_bytes
+        return _fetch_cutout_uncached(access_url, ra, dec, fov)
+
+
+def _fetch_cutout_uncached(access_url: str, ra: float, dec: float, fov: float) -> bytes:
     """PURE FETCH: Retrieves raw FITS cutout bytes from disk cache,
 
     local store, or downloading from IRSA with retries and backoff.
@@ -175,12 +207,13 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
 
     for attempt in range(settings.IRSA_MAX_RETRIES):
         try:
-            with fits.open(cutout_url, cache=True) as hdul:
-                buf = io.BytesIO()
-                hdul.writeto(buf)
-                raw_bytes = buf.getvalue()
-                cache.save_cached_fits(cutout_key, raw_bytes)
-                return raw_bytes
+            with _irsa_download_semaphore:
+                with fits.open(cutout_url, cache=True) as hdul:
+                    buf = io.BytesIO()
+                    hdul.writeto(buf)
+                    raw_bytes = buf.getvalue()
+                    cache.save_cached_fits(cutout_key, raw_bytes)
+                    return raw_bytes
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -193,6 +226,11 @@ def fetch_cutout(access_url: str, ra: float, dec: float, fov: float) -> bytes:
         except Exception as err:
             last_err = err
             break
+
+    if last_err is not None and _is_timeout_error(last_err):
+        raise TimeoutError(
+            f"IRSA FITS cutout request timed out after {settings.IRSA_MAX_RETRIES} attempts."
+        ) from last_err
 
     raise RuntimeError(
         f"Failed to download FITS cutout from IRSA after {settings.IRSA_MAX_RETRIES} attempts: {last_err}"
@@ -386,12 +424,14 @@ def spectrum_points(
     ra: float,
     dec: float,
     aperture_radius_pixels: int = SPECTRUM_APERTURE_RADIUS_PIXELS,
+    fov: float = settings.DEFAULT_FOV,
 ) -> list[dict[str, Any]]:
     """Calculates aperture photometry and spectral points (flux vs wavelength)
 
     for each observation at the target position.
     """
     points: list[dict[str, Any]] = []
+    last_error: Exception | None = None
 
     for f in frames:
         access_url = f.get("access_url") or f.get("url")
@@ -400,7 +440,7 @@ def spectrum_points(
 
         try:
             # Fetch FITS (from disk cache or download)
-            fits_bytes = fetch_cutout(access_url, ra=ra, dec=dec, fov=settings.DEFAULT_FOV)
+            fits_bytes = fetch_cutout(access_url, ra=ra, dec=dec, fov=fov)
             with fits.open(io.BytesIO(fits_bytes)) as hdul:
                 data = hdul[1].data.astype(float)
                 hdr = hdul[1].header
@@ -445,8 +485,14 @@ def spectrum_points(
                         "obs_id": f.get("obs_id"),
                     }
                 )
-        except Exception:
+        except Exception as exc:
+            last_error = exc
             continue
+
+    if not points and last_error is not None:
+        if isinstance(last_error, TimeoutError):
+            raise last_error
+        raise RuntimeError(f"Unable to calculate spectrum points: {last_error}") from last_error
 
     # Sort by ascending wavelength
     points.sort(key=lambda p: p["wavelength_um"])

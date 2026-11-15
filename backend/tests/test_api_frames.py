@@ -1,5 +1,26 @@
-def test_get_frames_by_target(client):
+def _mock_frame_search(monkeypatch, rows):
+    from app import cache, spherex
+
+    monkeypatch.setattr(spherex, "search_images", lambda ra, dec: rows)
+    monkeypatch.setattr(cache, "get_cached_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cache, "save_cached_metadata", lambda *args, **kwargs: None)
+
+
+def _rows():
+    return [
+        {
+            "obs_id": f"obs_{i}",
+            "access_url": f"https://irsa.ipac.caltech.edu/image_{i}.fits",
+            "mjd": 60800.0 + i * 60,
+            "detector": "D2",
+        }
+        for i in range(4)
+    ]
+
+
+def test_get_frames_by_target(client, monkeypatch):
     """Verifica la obtención de la secuencia temporal para un objetivo conocido."""
+    _mock_frame_search(monkeypatch, _rows())
     resp = client.get("/api/frames?target=rw_aur&detector=D2&n=8")
     assert resp.status_code == 200
     data = resp.json()
@@ -14,8 +35,9 @@ def test_get_frames_by_target(client):
     assert "date" in first
 
 
-def test_get_frames_by_coordinates(client):
+def test_get_frames_by_coordinates(client, monkeypatch):
     """Verifica la obtención de cuadros mediante coordenadas directas RA/Dec."""
+    _mock_frame_search(monkeypatch, _rows())
     resp = client.get("/api/frames?ra=76.95642&dec=30.40142&fov=0.1&detector=D2&n=5")
     assert resp.status_code == 200
     data = resp.json()
@@ -30,7 +52,8 @@ def test_get_frames_validation_errors(client):
 
     # Coordenadas fuera de rango
     resp_bad_ra = client.get("/api/frames?ra=999&dec=0")
-    assert resp_bad_ra.status_code in (400, 422)
+    assert resp_bad_ra.status_code == 400
+    assert set(resp_bad_ra.json()) == {"error"}
 
     # Detector inválido
     resp_bad_det = client.get("/api/frames?target=rw_aur&detector=D99")
@@ -38,7 +61,21 @@ def test_get_frames_validation_errors(client):
 
     # Objetivo inexistente
     resp_bad_target = client.get("/api/frames?target=non_existent_star_xyz")
-    assert resp_bad_target.status_code == 404
+    assert resp_bad_target.status_code == 400
+
+
+def test_frames_timeout_uses_gateway_timeout_response(client, monkeypatch):
+    from app import cache, spherex
+
+    def timeout(ra, dec):
+        raise TimeoutError("IRSA timed out")
+
+    monkeypatch.setattr(cache, "get_cached_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spherex, "search_images", timeout)
+    resp = client.get("/api/frames?ra=10&dec=20")
+
+    assert resp.status_code == 504
+    assert set(resp.json()) == {"error"}
 
 
 def test_get_frame_png_rendering_and_cache(client, sample_fits_file):
@@ -67,4 +104,11 @@ def test_get_frame_ssrf_protection(client):
     bad_url = "https://malicious-domain.com/evil.fits"
     resp = client.get(f"/api/frame?src={bad_url}&ra=10.0&dec=20.0")
     assert resp.status_code == 400
-    assert "inválida" in resp.json()["error"].lower()
+    assert "invalid" in resp.json()["error"].lower()
+
+
+def test_frame_cors_exposes_wavelength_header(client):
+    """Allows the local frontend to read the optional wavelength response header."""
+    resp = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "X-Wavelength-Um" in resp.headers["access-control-expose-headers"]

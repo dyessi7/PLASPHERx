@@ -1,5 +1,18 @@
-def test_get_epochs_clustering(client):
+def test_get_epochs_clustering(client, monkeypatch):
     """Verifica épocas apiladas y restas entre épocas consecutivas (contrato del frontend)."""
+    import numpy as np
+    from app import cache, spherex
+
+    rows = [
+        {"access_url": f"https://irsa.ipac.caltech.edu/image_{i}.fits", "mjd": mjd, "detector": "D2"}
+        for i, mjd in enumerate((60800.0, 60805.0, 60900.0, 60905.0))
+    ]
+    monkeypatch.setattr(cache, "get_cached_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spherex, "search_images", lambda ra, dec: rows)
+    monkeypatch.setattr(spherex, "fetch_cutout", lambda **kwargs: b"fits")
+    monkeypatch.setattr(spherex, "aligned_array", lambda *args, **kwargs: np.ones((2, 2)))
+    monkeypatch.setattr(spherex, "array_to_png", lambda *args, **kwargs: b"png")
+    monkeypatch.setattr(spherex, "diff_to_png", lambda *args, **kwargs: b"png")
     resp = client.get("/api/epochs?target=rw_aur&detector=D2&n=16&threshold_days=30")
     assert resp.status_code == 200
     data = resp.json()
@@ -20,8 +33,34 @@ def test_get_epochs_clustering(client):
         assert ids.index(d["b"]) == ids.index(d["a"]) + 1
 
 
-def test_get_spectrum_photometry(client):
+def test_get_spectrum_photometry(client, monkeypatch):
     """Verifica el cálculo de fotometría de apertura y espectro astronómico."""
+    from app import cache, spherex
+
+    rows = [
+        {
+            "access_url": f"https://irsa.ipac.caltech.edu/image_{i}.fits",
+            "mjd": 60800.0 + i,
+            "detector": "D2",
+        }
+        for i in range(6)
+    ]
+    monkeypatch.setattr(cache, "get_cached_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spherex, "search_images", lambda ra, dec: rows)
+    monkeypatch.setattr(
+        spherex,
+        "spectrum_points",
+        lambda *args, **kwargs: [
+            {
+                "wavelength_um": 1.2,
+                "flux": 10.0,
+                "flux_err": 1.0,
+                "mjd": 60800.0,
+                "date": "2025-05-01",
+                "detector": "D2",
+            }
+        ],
+    )
     resp = client.get("/api/spectrum?target=rw_aur&detector=D2&n=6")
     assert resp.status_code == 200
     data = resp.json()
