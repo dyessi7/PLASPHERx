@@ -1,0 +1,198 @@
+/* Results panel: title, tabs, and the Frames / Epochs / Spectrum views. */
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.results__title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__tab {
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.tabs__tab:hover {
+  color: var(--text);
+}
+
+.tabs__tab[aria-selected='true'] {
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom: 1px solid var(--surface);
+  color: var(--text);
+}
+
+.frames,
+.epochs,
+.spectrum {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.frames__progress {
+  margin: 0;
+  color: var(--warning);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.status__message {
+  margin: 0 0 12px;
+}
+
+.status__hint {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+}
+
+.status .button {
+  color: var(--text);
+}
+
+/* Two-option toggle (epoch images / differences). */
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 8px 14px;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #08121f;
+  font-weight: 500;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend__swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--text-muted);
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+/* Spectrum */
+
+.spectrum__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.spectrum__actions + .status,
+.spectrum .status {
+  margin: 0;
+}
+
+.spectrum__chart {
+  width: 100%;
+  height: 360px;
+}
+
+.chart-tooltip {
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-family: var(--mono);
+}
+
+.chart-tooltip__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.spectrum__table summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.spectrum__table table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.spectrum__table th,
+.spectrum__table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.spectrum__table th:first-child,
+.spectrum__table td:first-child {
+  text-align: left;
+}
+
+.spectrum__table th {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .spectrum__chart {
+    height: 300px;
+  }
+}
+
+.spectrum__table {
+  overflow-x: auto;
+}

@@ -1,117 +1,47 @@
-// Data layer. Precomputed targets (static files under public/data/) and the live
-// API both return the same shape, so the rest of the app never needs to know
-// where the frames came from:
+// Data layer. Everything comes from the live API at VITE_API_URL.
 //
-//   { target: { name, ra, dec, fov }, frames: [{ url, mjd, date, detector, wavelength_um }] }
+//   GET /api/frames    -> { target, frames: [{ url, mjd, date, detector, wavelength_um }] }
+//   GET <frame url>    -> PNG, optionally with an X-Wavelength-Um header
+//   GET /api/epochs    -> { target, detector, epochs: [...], diffs: [...] }
+//   GET /api/spectrum  -> { target, detector, flux_unit, aperture_arcsec, points: [...] }
 //
-// Every frame `url` returned from here is absolute and ready for an <img>.
+// Errors come back as JSON { "error": "..." } with a 4xx/5xx status.
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
-/** True when a live API base URL was configured at build time. */
-export const LIVE_API_AVAILABLE = API_URL !== ''
+/** True when a data service URL was configured at build time. */
+export const API_CONFIGURED = API_URL !== ''
 
-const DATA_BASE = new URL(`${import.meta.env.BASE_URL}data/`, window.location.href)
-
-/** Thrown when a precomputed target has no manifest for the requested detector. */
-export class NoDataError extends Error {
-  constructor(message = 'No data available for this target yet.') {
-    super(message)
-    this.name = 'NoDataError'
+/** Thrown when VITE_API_URL is not set. */
+class ApiNotConfiguredError extends Error {
+  constructor() {
+    super('The data service is not configured.')
+    this.name = 'ApiNotConfiguredError'
   }
 }
 
-/** Thrown by loadLive() when VITE_API_URL is not set. */
-export class LiveUnavailableError extends Error {
-  constructor(message = 'Live search is not available in this deployment.') {
-    super(message)
-    this.name = 'LiveUnavailableError'
+/** Error from the API, carrying the HTTP status (0 for network failures). */
+class ApiError extends Error {
+  constructor(message, status, options) {
+    super(message, options)
+    this.name = 'ApiError'
+    this.status = status
   }
 }
 
-// Target keys become part of a file path, so only allow simple slugs.
-const KEY_PATTERN = /^[a-z0-9_-]+$/i
-const DETECTOR_PATTERN = /^D[1-6]$/
+// Status codes that mean "this endpoint is not available yet".
+const UNAVAILABLE_STATUSES = new Set([404, 501])
 
-function targetBase(key) {
-  if (!KEY_PATTERN.test(key)) throw new NoDataError(`Unknown target "${key}".`)
-  return new URL(`${key}/`, DATA_BASE)
-}
+async function getJson(path, params, { signal } = {}) {
+  if (!API_CONFIGURED) throw new ApiNotConfiguredError()
 
-function checkDetector(detector) {
-  if (!DETECTOR_PATTERN.test(detector)) throw new NoDataError(`Unknown detector "${detector}".`)
-}
-
-/**
- * Fetches a static JSON file. Returns null when the file does not exist.
- * Dev servers and SPA hosts often answer missing files with index.html and a
- * 200 status, so a non-JSON response is also treated as "missing".
- */
-async function fetchStaticJson(url, { signal } = {}) {
-  const res = await fetch(url, { signal })
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`Could not load ${url.pathname || url} (HTTP ${res.status}).`)
-  const type = res.headers.get('content-type') || ''
-  if (!type.includes('json')) return null
-  return res.json()
-}
-
-function resolveUrl(url, base) {
-  return new URL(url, base).href
-}
-
-/** Resolves frame URLs and sorts frames chronologically. */
-function normalizeManifest(manifest, base) {
-  const frames = (manifest.frames || [])
-    .filter((f) => f && f.url)
-    .map((f) => ({
-      url: resolveUrl(f.url, base),
-      mjd: f.mjd ?? null,
-      date: f.date ?? null,
-      detector: f.detector ?? null,
-      wavelength_um: f.wavelength_um ?? null,
-    }))
-    .sort((a, b) => (a.mjd ?? 0) - (b.mjd ?? 0))
-  return { target: manifest.target || null, frames }
-}
-
-/** List of precomputed example targets. Returns [] if targets.json is missing. */
-export async function loadTargets({ signal } = {}) {
-  const data = await fetchStaticJson(new URL('targets.json', DATA_BASE), { signal })
-  return Array.isArray(data) ? data : []
-}
-
-/** Frames for a precomputed target and detector. Throws NoDataError if absent. */
-export async function loadPrecomputed(key, detector = 'D2', { signal } = {}) {
-  checkDetector(detector)
-  const base = targetBase(key)
-  const manifest = await fetchStaticJson(new URL(`manifest_${detector}.json`, base), { signal })
-  if (!manifest) throw new NoDataError()
-  return normalizeManifest(manifest, base)
-}
-
-/**
- * Frames for any sky position, from the live API. Only the manifest is
- * fetched here; the PNGs themselves are slow and are loaded by the caller.
- */
-export async function loadLive({ ra, dec, fov = 0.1, detector = 'D2', n = 16 }, { signal } = {}) {
-  if (!LIVE_API_AVAILABLE) throw new LiveUnavailableError()
-
-  const params = new URLSearchParams({
-    ra: String(ra),
-    dec: String(dec),
-    fov: String(fov),
-    detector,
-    n: String(n),
-  })
-  const url = `${API_URL}/api/frames?${params}`
-
+  const url = `${API_URL}${path}?${new URLSearchParams(params)}`
   let res
   try {
     res = await fetch(url, { signal })
   } catch (err) {
     if (err.name === 'AbortError') throw err
-    throw new Error('Could not reach the SPHEREx Sky Viewer API. Check your connection and try again.', {
+    throw new ApiError('Could not reach the data service. Check your connection and try again.', 0, {
       cause: err,
     })
   }
@@ -125,31 +55,80 @@ export async function loadLive({ ra, dec, fov = 0.1, detector = 'D2', n = 16 }, 
 
   if (!res.ok) {
     const detail = body && body.error ? body.error : `HTTP ${res.status}`
-    throw new Error(`The archive request failed: ${detail}`)
+    throw new ApiError(`The archive request failed: ${detail}`, res.status)
   }
-  if (!body || !Array.isArray(body.frames)) {
-    throw new Error('The API returned an unexpected response.')
-  }
-
-  return normalizeManifest(body, `${API_URL}/`)
+  if (!body) throw new ApiError('The data service returned an unexpected response.', res.status)
+  return body
 }
 
-/** Epoch stacks and difference images. Returns null if not generated yet. */
-export async function loadEpochs(key, detector = 'D2', { signal } = {}) {
-  checkDetector(detector)
-  const base = targetBase(key)
-  const data = await fetchStaticJson(new URL(`epochs_${detector}.json`, base), { signal })
-  if (!data) return null
+function queryParams({ ra, dec, fov, detector }, n) {
+  return { ra: String(ra), dec: String(dec), fov: String(fov), detector, n: String(n) }
+}
+
+/** Frame list for a sky position. Frame URLs are absolute and sorted by date. */
+export async function loadFrames(query, { signal } = {}) {
+  const body = await getJson('/api/frames', queryParams(query, 16), { signal })
+  if (!Array.isArray(body.frames)) throw new ApiError('The data service returned an unexpected response.', 200)
+
+  const frames = body.frames
+    .filter((f) => f && f.url)
+    .map((f) => ({
+      url: new URL(f.url, `${API_URL}/`).href,
+      mjd: f.mjd ?? null,
+      date: f.date ?? null,
+      detector: f.detector ?? null,
+      wavelength_um: f.wavelength_um ?? null,
+    }))
+    .sort((a, b) => (a.mjd ?? 0) - (b.mjd ?? 0))
+  return { target: body.target || null, frames }
+}
+
+/**
+ * Downloads one frame PNG. Returns an object URL (the caller must revoke it)
+ * and the wavelength from the X-Wavelength-Um header, or null if absent.
+ */
+export async function loadFrameImage(url, { signal } = {}) {
+  const res = await fetch(url, { signal })
+  if (!res.ok) throw new ApiError(`Frame request failed (HTTP ${res.status}).`, res.status)
+  const blob = await res.blob()
+  const header = res.headers.get('X-Wavelength-Um')
+  const wavelength = header === null || header.trim() === '' ? NaN : Number(header)
   return {
-    ...data,
-    epochs: (data.epochs || []).map((e) => ({ ...e, url: resolveUrl(e.url, base) })),
-    diffs: (data.diffs || []).map((d) => ({ ...d, url: resolveUrl(d.url, base) })),
+    objectUrl: URL.createObjectURL(blob),
+    wavelengthUm: Number.isFinite(wavelength) ? wavelength : null,
   }
 }
 
-/** Photometry across wavelengths. Returns null if not generated yet. */
-export async function loadSpectrum(key, { signal } = {}) {
-  const data = await fetchStaticJson(new URL('spectrum.json', targetBase(key)), { signal })
-  if (!data || !Array.isArray(data.points)) return null
-  return data
+/** Epoch stacks and difference images. Returns null if the endpoint is not available. */
+export async function loadEpochs(query, { signal } = {}) {
+  try {
+    const body = await getJson('/api/epochs', queryParams(query, 16), { signal })
+    return { ...body, epochs: body.epochs || [], diffs: body.diffs || [] }
+  } catch (err) {
+    if (err instanceof ApiError && UNAVAILABLE_STATUSES.has(err.status)) return null
+    throw err
+  }
+}
+
+/** Photometry for one detector. Returns null if the endpoint is not available. */
+export async function loadSpectrum(query, { signal } = {}) {
+  try {
+    const body = await getJson('/api/spectrum', queryParams(query, 4), { signal })
+    return { ...body, points: Array.isArray(body.points) ? body.points : [] }
+  } catch (err) {
+    if (err instanceof ApiError && UNAVAILABLE_STATUSES.has(err.status)) return null
+    throw err
+  }
+}
+
+/** Runs `worker` over `items`, at most `limit` at a time. */
+export async function forEachConcurrent(items, limit, worker) {
+  let next = 0
+  async function lane() {
+    while (next < items.length) {
+      const item = items[next++]
+      await worker(item)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane))
 }

@@ -1,0 +1,130 @@
+/* Image player: the sky image is the centerpiece. */
+
+.player {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.player__viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: var(--sky);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.player__viewport--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Tiny PNGs scaled up: keep every pixel sharp, never smooth. */
+.player__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  user-select: none;
+}
+
+.player__info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.player__info div {
+  display: flex;
+  gap: 6px;
+}
+
+.player__info dt {
+  color: var(--text-muted);
+}
+
+.player__info dd {
+  margin: 0;
+  font-family: var(--mono);
+}
+
+.player__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.player__scrubber {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.player__counter {
+  flex: none;
+  min-width: 4.5ch;
+  text-align: right;
+  font-size: 0.9rem;
+}
+
+.player__speed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.player__speed input {
+  flex: 1;
+  max-width: 200px;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.player__speed .mono {
+  color: var(--text);
+  min-width: 5ch;
+}
+
+/* Square icon buttons used by the player controls. */
+.icon-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.icon-button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #08121f;
+}
+
+.icon-button:disabled {
+  opacity: 0.45;
+}
