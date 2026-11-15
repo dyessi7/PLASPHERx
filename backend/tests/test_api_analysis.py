@@ -1,17 +1,23 @@
 def test_get_epochs_clustering(client):
-    """Verifica la agrupación temporal de cuadros en épocas de observación."""
-    resp = client.get("/api/epochs?target=rw_aur&detector=D2&threshold_days=30")
+    """Verifica épocas apiladas y restas entre épocas consecutivas (contrato del frontend)."""
+    resp = client.get("/api/epochs?target=rw_aur&detector=D2&n=16&threshold_days=30")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["total_epochs"] >= 1
-    assert len(data["epochs"]) == data["total_epochs"]
+    assert data["detector"] == "D2"
+    assert len(data["epochs"]) >= 1
+    assert len(data["diffs"]) == len(data["epochs"]) - 1
 
-    for ep in data["epochs"]:
-        assert ep["epoch_index"] >= 1
-        assert "Época" in ep["label"]
-        assert ep["frame_count"] > 0
-        assert ep["mjd_start"] <= ep["mjd_end"]
-        assert len(ep["frames"]) == ep["frame_count"]
+    for i, ep in enumerate(data["epochs"], start=1):
+        assert ep["id"] == f"e{i}"
+        assert ep["url"].startswith("data:image/png;base64,")
+        assert ep["date_start"] <= ep["date_end"]
+        assert ep["n_frames"] > 0
+        assert isinstance(ep["mjd_mid"], float)
+
+    ids = [ep["id"] for ep in data["epochs"]]
+    for d in data["diffs"]:
+        assert d["url"].startswith("data:image/png;base64,")
+        assert ids.index(d["b"]) == ids.index(d["a"]) + 1
 
 
 def test_get_spectrum_photometry(client):
@@ -21,6 +27,8 @@ def test_get_spectrum_photometry(client):
     data = resp.json()
     assert data["target"]["name"] == "RW Aurigae"
     assert data["total_points"] >= 1
+    assert data["flux_unit"] == "mJy"
+    assert data["aperture_arcsec"] > 0
 
     points = data["points"]
     # Verificar orden ascendente por longitud de onda
