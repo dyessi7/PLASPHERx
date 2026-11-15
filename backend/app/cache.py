@@ -52,7 +52,9 @@ def get_cache_stats() -> dict[str, int]:
 
 def make_frame_key(src: str, ra: float, dec: float, fov: float) -> str:
     """Generates a deterministic SHA-256 key for a specific cropped PNG frame."""
-    raw = json.dumps(["png", src, ra, dec, fov], separators=(",", ":"))
+    from app.spherex import RENDER_VERSION  # stale renders must not be served
+
+    raw = json.dumps(["png", RENDER_VERSION, src, ra, dec, fov], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -64,7 +66,9 @@ def make_cutout_key(src: str, ra: float, dec: float, fov: float) -> str:
 
 def make_query_key(ra: float, dec: float, fov: float, detector: str, n: int) -> str:
     """Generates a deterministic SHA-256 key for a frame metadata query."""
-    raw = json.dumps(["query", ra, dec, fov, detector, n], separators=(",", ":"))
+    from app.spherex import RENDER_VERSION  # cached payload embeds versioned frame URLs
+
+    raw = json.dumps(["query", RENDER_VERSION, ra, dec, fov, detector, n], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
