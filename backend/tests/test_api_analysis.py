@@ -1,5 +1,5 @@
 def test_get_epochs_clustering(client, monkeypatch):
-    """Verifica épocas apiladas y restas entre épocas consecutivas (contrato del frontend)."""
+    """Verifies stacked epochs and consecutive epoch subtractions (frontend contract)."""
     import numpy as np
     from app import cache, spherex
 
@@ -34,7 +34,7 @@ def test_get_epochs_clustering(client, monkeypatch):
 
 
 def test_get_spectrum_photometry(client, monkeypatch):
-    """Verifica el cálculo de fotometría de apertura y espectro astronómico."""
+    """Verifies aperture photometry calculation and astronomical spectrum generation."""
     from app import cache, spherex
 
     rows = [
@@ -70,7 +70,7 @@ def test_get_spectrum_photometry(client, monkeypatch):
     assert data["aperture_arcsec"] > 0
 
     points = data["points"]
-    # Verificar orden ascendente por longitud de onda
+    # Verify ascending order by wavelength
     wavelengths = [p["wavelength_um"] for p in points]
     assert wavelengths == sorted(wavelengths)
 
@@ -80,7 +80,7 @@ def test_get_spectrum_photometry(client, monkeypatch):
 
 
 def test_get_health_system_status(client):
-    """Verifica que /api/health reporte estado ok, permisos de escritura y conteo de caché."""
+    """Verifies that /api/health reports ok status, write permissions, and cache counters."""
     resp = client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
