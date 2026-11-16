@@ -63,22 +63,43 @@ def _png_pixels(png_bytes):
 
 
 def test_saturated_pixels_render_white_and_no_data_black():
-    """Saturados (+inf) en blanco: negro se leería como cielo vacío. Sin datos (NaN) en negro."""
+    """Saturated (+inf) in white: black would be misread as empty sky. No-data (NaN) in black."""
     import numpy as np
 
     arr = np.linspace(0.0, 1.0, 16).reshape(4, 4)
     arr[1, 1] = np.inf
     arr[2, 2] = np.nan
     img = _png_pixels(spherex.array_to_png(arr, zoom=1))
-    # _encode_png voltea las filas (norte arriba)
+    # _encode_png flips rows (north up)
     assert img[2, 1] == 255
     assert img[1, 2] == 0
 
 
 def test_diff_ignores_saturated_pixels():
-    """En la diferencia, un píxel saturado no tiene cambio medible: gris."""
+    """In difference images, a saturated pixel has no measurable change: gray."""
     import numpy as np
 
     diff = np.array([[np.inf, 1.0], [np.nan, -1.0]])
     img = _png_pixels(spherex.diff_to_png(diff, zoom=1))
     assert img.tolist() == [[127, 0], [127, 255]]
+
+
+def test_select_frames_missing_detector_returns_empty():
+    """Missing detector must return empty list rather than silently mixing other detectors."""
+    rows = [{"obs_id": "obs_01", "mjd": 60800.0, "detector": "D1", "access_url": "http://test/1.fits"}]
+    assert spherex.select_frames(rows, detector="D2", n=10) == []
+
+
+def test_stretch_limits_shared_contrast():
+    """Verifies that stretch_limits extracts common 5-99.5% range across multiple arrays."""
+    import numpy as np
+
+    arr1 = np.array([[10.0, 20.0], [30.0, 40.0]])
+    arr2 = np.array([[50.0, 60.0], [70.0, 80.0]])
+    lo, hi = spherex.stretch_limits(arr1, arr2)
+    assert lo >= 10.0
+    assert hi <= 80.0
+    assert hi > lo
+
+    png = spherex.array_to_png(arr1, zoom=2, limits=(lo, hi))
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")

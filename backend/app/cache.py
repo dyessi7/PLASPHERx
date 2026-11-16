@@ -50,11 +50,11 @@ def get_cache_stats() -> dict[str, int]:
         }
 
 
-def make_frame_key(src: str, ra: float, dec: float, fov: float) -> str:
+def make_frame_key(src: str, ra: float, dec: float, fov: float, ref: str | None = None) -> str:
     """Generates a deterministic SHA-256 key for a specific cropped PNG frame."""
     from app.spherex import RENDER_VERSION  # stale renders must not be served
 
-    raw = json.dumps(["png", RENDER_VERSION, src, ra, dec, fov], separators=(",", ":"))
+    raw = json.dumps(["png", RENDER_VERSION, src, ra, dec, fov, ref], separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -104,11 +104,25 @@ def _save_cache_file(directory: Path, filename: str, data: bytes) -> None:
                 if oldest == path:
                     continue
                 size = sizes[oldest]
-                oldest.unlink()
+                oldest.unlink(missing_ok=True)
                 total_size -= size
-            path.write_bytes(data)
+
+            # Atomic write via temp file in the same directory
+            tmp_path = directory / f"{filename}.tmp.{threading.get_ident()}_{time.time_ns()}"
+            tmp_path.write_bytes(data)
+            tmp_path.replace(path)
         except OSError as exc:
             logger.warning("Unable to update cache entry %s: %s", path, exc)
+
+
+def _touch_lru(path: Path) -> None:
+    """Updates access and modification time to implement true LRU eviction."""
+    try:
+        time_now = time.time()
+        import os
+        os.utime(path, (time_now, time_now))
+    except OSError:
+        pass
 
 
 def get_cached_frame(key: str) -> bytes | None:
@@ -116,7 +130,9 @@ def get_cached_frame(key: str) -> bytes | None:
     path = FRAMES_DIR / f"{key}.png"
     if path.is_file():
         try:
-            return path.read_bytes()
+            data = path.read_bytes()
+            _touch_lru(path)
+            return data
         except OSError as exc:
             logger.warning("Unable to read cached frame %s: %s", path, exc)
             return None
@@ -128,12 +144,34 @@ def save_cached_frame(key: str, data: bytes) -> None:
     _save_cache_file(FRAMES_DIR, f"{key}.png", data)
 
 
+def save_cached_frame_meta(key: str, meta: dict[str, Any]) -> None:
+    """Saves lightweight metadata (wavelength, saturation, contamination flags) for a cached frame."""
+    try:
+        encoded = json.dumps(meta).encode("utf-8")
+        _save_cache_file(FRAMES_DIR, f"{key}.meta.json", encoded)
+    except Exception as exc:
+        logger.warning("Unable to save frame meta for %s: %s", key, exc)
+
+
+def get_cached_frame_meta(key: str) -> dict[str, Any] | None:
+    """Retrieves cached frame metadata if present."""
+    path = FRAMES_DIR / f"{key}.meta.json"
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
 def get_cached_fits(key: str) -> bytes | None:
     """Retrieves cached raw FITS cutout bytes if present."""
     path = FITS_DIR / f"{key}.fits"
     if path.is_file():
         try:
-            return path.read_bytes()
+            data = path.read_bytes()
+            _touch_lru(path)
+            return data
         except OSError as exc:
             logger.warning("Unable to read cached FITS %s: %s", path, exc)
             return None
@@ -161,7 +199,9 @@ def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> Any | N
             return None
 
         content = path.read_text(encoding="utf-8")
-        return json.loads(content)
+        data = json.loads(content)
+        _touch_lru(path)
+        return data
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Unable to read cached metadata %s: %s", path, exc)
         return None

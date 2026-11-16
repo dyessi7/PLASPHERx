@@ -46,6 +46,37 @@ def test_cache_evicts_old_entries_to_stay_under_size_limit(monkeypatch, tmp_path
     assert (fits_dir / "new.fits").read_bytes() == b"456"
 
 
+def test_cache_lru_touch_prevents_eviction(monkeypatch, tmp_path):
+    """Reading a cache entry touches its timestamp so it is not evicted before untouched entries."""
+    frames_dir = tmp_path / "frames"
+    metadata_dir = tmp_path / "metadata"
+    fits_dir = tmp_path / "fits"
+    for directory in (frames_dir, metadata_dir, fits_dir):
+        directory.mkdir()
+
+    monkeypatch.setattr(cache, "FRAMES_DIR", frames_dir)
+    monkeypatch.setattr(cache, "METADATA_DIR", metadata_dir)
+    monkeypatch.setattr(cache, "FITS_DIR", fits_dir)
+    monkeypatch.setattr(get_settings(), "CACHE_MAX_BYTES", 6)
+
+    # Save two entries
+    cache.save_cached_frame("item1", b"123")
+    cache.save_cached_frame("item2", b"456")
+    # Simulate item1 was older
+    os.utime(frames_dir / "item1.png", (100, 100))
+    os.utime(frames_dir / "item2.png", (200, 200))
+
+    # Read item1 -> updates LRU timestamp
+    assert cache.get_cached_frame("item1") == b"123"
+
+    # Save item3 -> requires evicting one entry. item2 should be evicted because item1 was accessed!
+    cache.save_cached_frame("item3", b"789")
+
+    assert (frames_dir / "item1.png").exists()
+    assert not (frames_dir / "item2.png").exists()
+    assert (frames_dir / "item3.png").exists()
+
+
 def test_concurrent_cutout_requests_share_one_fetch(monkeypatch, tmp_path):
     fits_dir = tmp_path / "fits"
     fits_dir.mkdir()

@@ -45,10 +45,14 @@ SATURATION_FLAG_BITS = (1 << 1) | (1 << 2)
 # Bump whenever the PNG rendering changes. It is part of the frame URL and the
 # disk cache key, so neither browsers nor the server keep serving the old look.
 # v2: saturated cores render white instead of black.
-RENDER_VERSION = 2
+# v3: one contrast stretch shared by the whole sequence (reference frame), so
+#     brightness changes of variable stars stay visible.
+RENDER_VERSION = 3
 
 SPECTRUM_FLUX_UNIT = "mJy"
 SPECTRUM_APERTURE_RADIUS_PIXELS = 2
+# HTTP statuses worth retrying (timeouts, rate limiting, server-side errors).
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 _irsa_download_semaphore = threading.Semaphore(settings.MAX_CONCURRENT_DOWNLOADS)
 _cutout_locks_guard = threading.Lock()
 _cutout_locks: dict[str, tuple[Any, int]] = {}
@@ -122,10 +126,13 @@ def _search_images_uncached(ra: float, dec: float) -> list[dict[str, Any]]:
 
 
 def select_frames(rows: list[dict[str, Any]], detector: str = "D2", n: int = 16) -> list[dict[str, Any]]:
-    """Filters by detector and selects a uniformly distributed sample over the observation timeline."""
+    """Keeps only frames of the requested detector and selects a uniformly distributed
+    sample over the observation timeline. Returns [] if the detector has no frames,
+    instead of silently mixing in other detectors.
+    """
     filtered = [r for r in rows if r.get("detector") == detector]
     if not filtered:
-        filtered = rows
+        return []
 
     if len(filtered) <= n:
         return filtered
@@ -211,19 +218,26 @@ def _fetch_cutout_uncached(access_url: str, ra: float, dec: float, fov: float) -
         except OSError:
             pass
 
-    # 2. Download cutout from IRSA with retries and exponential backoff
+    # 2. Download cutout from IRSA with retries and linear backoff
     cutout_url = _build_cutout_url(access_url, ra=ra, dec=dec, fov=fov)
     last_err: Exception | None = None
 
     for attempt in range(settings.IRSA_MAX_RETRIES):
         try:
             with _irsa_download_semaphore:
-                with fits.open(cutout_url, cache=True) as hdul:
+                # cache=False: our own size-limited cache stores the bytes; astropy's
+                # download cache (~/.astropy/cache) would keep an unbounded second copy.
+                with fits.open(cutout_url, cache=False) as hdul:
                     buf = io.BytesIO()
                     hdul.writeto(buf)
                     raw_bytes = buf.getvalue()
                     cache.save_cached_fits(cutout_key, raw_bytes)
                     return raw_bytes
+        except urllib.error.HTTPError as err:
+            last_err = err
+            # Client errors (bad URL, not found) will not succeed on retry.
+            if err.code not in _RETRYABLE_HTTP_STATUSES:
+                break
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -232,10 +246,11 @@ def _fetch_cutout_uncached(access_url: str, ra: float, dec: float, fov: float) -
             http.client.RemoteDisconnected,
         ) as err:
             last_err = err
-            time.sleep(1.5 * (attempt + 1))
         except Exception as err:
             last_err = err
             break
+        if attempt < settings.IRSA_MAX_RETRIES - 1:
+            time.sleep(1.5 * (attempt + 1))
 
     if last_err is not None and _is_timeout_error(last_err):
         raise TimeoutError(
@@ -312,13 +327,30 @@ def _encode_png(norm: np.ndarray, zoom: int) -> bytes:
     return buf.getvalue()
 
 
-def array_to_png(alineado: np.ndarray, zoom: int = 4) -> bytes:
-    """PURE PROCESSING: Percentile contrast stretch (5% to 99.5%) and PNG encoding.
+def stretch_limits(*arrays: np.ndarray) -> tuple[float, float]:
+    """Percentile stretch limits (5% to 99.5%) over the finite pixels of one or more arrays.
 
+    Saturated (+inf) and no-data (NaN) pixels are ignored.
+    """
+    finite = [a[np.isfinite(a)] for a in arrays]
+    values = np.concatenate(finite) if finite else np.array([])
+    if not values.size:
+        return 0.0, 0.0
+    lo, hi = np.percentile(values, [5.0, 99.5])
+    return float(lo), float(hi)
+
+
+def array_to_png(
+    alineado: np.ndarray, zoom: int = 4, limits: tuple[float, float] | None = None
+) -> bytes:
+    """PURE PROCESSING: Linear contrast stretch and PNG encoding.
+
+    `limits` = (lo, hi) shared by every image of a sequence, so brightness
+    changes between images stay visible. Without it, the image is stretched
+    on its own percentiles, which hides variability.
     Saturated pixels (+inf) render white; no-data pixels (NaN) render black.
     """
-    finite = alineado[np.isfinite(alineado)]
-    lo, hi = np.percentile(finite, [5.0, 99.5]) if finite.size else (0.0, 0.0)
+    lo, hi = limits if limits is not None else stretch_limits(alineado)
     if hi > lo:
         with np.errstate(invalid="ignore"):
             norm = np.clip((alineado - lo) / (hi - lo), 0.0, 1.0)
@@ -342,6 +374,40 @@ def diff_to_png(diff: np.ndarray, zoom: int = 4) -> bytes:
         norm = np.full_like(diff, 0.5)
     # No-data and saturated pixels carry no measurable change: show them as gray.
     return _encode_png(np.where(finite, norm, 0.5), zoom)
+
+
+QUALITY_FLAG_BITS = {
+    "saturated": (1 << 1) | (1 << 2),   # OVERFLOW or SUR_ERROR
+    "cosmic_ray": (1 << 3),              # Radiation / cosmic ray hit
+    "stray_light": (1 << 4),             # Stray light contamination
+    "bad_pixel": (1 << 0),               # Dead / uncalibrated pixel
+}
+
+
+def contamination_flags_at(
+    fits_bytes: bytes, ra: float, dec: float, radius_pixels: int = SPECTRUM_APERTURE_RADIUS_PIXELS
+) -> list[str]:
+    """Returns a list of active contamination/quality flags in the aperture around (ra, dec)."""
+    flags_found: list[str] = []
+    try:
+        with fits.open(io.BytesIO(fits_bytes)) as hdul:
+            if "FLAGS" not in hdul:
+                return flags_found
+            flags_data = hdul["FLAGS"].data.astype(np.int64)
+            coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+            px, py = WCS(hdul[1].header).world_to_pixel(coord)
+            if not np.isfinite([px, py]).all():
+                return flags_found
+            ix, iy = int(np.round(float(px))), int(np.round(float(py)))
+            h, w = flags_data.shape
+            r = radius_pixels
+            aperture_flags = flags_data[max(0, iy - r):min(h, iy + r + 1), max(0, ix - r):min(w, ix + r + 1)]
+            for name, bitmask in QUALITY_FLAG_BITS.items():
+                if bool((aperture_flags & bitmask).any()):
+                    flags_found.append(name)
+    except Exception:
+        pass
+    return flags_found
 
 
 def saturated_at(
@@ -376,9 +442,10 @@ def cutout_to_png(
     dec: float,
     fov: float,
     zoom: int = 4,
+    limits: tuple[float, float] | None = None,
 ) -> bytes:
     """PURE PROCESSING: Converts in-memory FITS bytes to an aligned, contrast-stretched PNG image."""
-    return array_to_png(aligned_array(fits_bytes, ra=ra, dec=dec, fov=fov), zoom=zoom)
+    return array_to_png(aligned_array(fits_bytes, ra=ra, dec=dec, fov=fov), zoom=zoom, limits=limits)
 
 
 def cutout_wavelength(fits_bytes: bytes | fits.Header, ra: float, dec: float, fobj: Any = None) -> float | None:
@@ -520,13 +587,25 @@ def spectrum_points(
                 aperture_data = data[y0:y1, x0:x1]
                 sat_mask = _saturation_mask(hdul)
                 saturated = bool(sat_mask is not None and sat_mask[y0:y1, x0:x1].any())
-                sky_bg = float(np.nanmedian(data))
+
+                # Measure sky background and noise from pixels outside the target aperture
+                # so the star's own flux does not bias the background or blow up the error.
+                y_idx, x_idx = np.ogrid[:h, :w]
+                dist_sq = (x_idx - ix) ** 2 + (y_idx - iy) ** 2
+                sky_pixels = data[dist_sq > (r + 1) ** 2]
+                finite_sky = sky_pixels[np.isfinite(sky_pixels)]
+                if finite_sky.size > 0:
+                    sky_bg = float(np.median(finite_sky))
+                    sky_std = float(np.std(finite_sky))
+                else:
+                    sky_bg = float(np.nanmedian(data)) if np.isfinite(data).any() else 0.0
+                    sky_std = float(np.nanstd(data)) if np.isfinite(data).any() else 0.0
+
                 # Surface brightness (MJy/sr) summed over pixels -> flux in mJy
                 to_mjy = SPHEREX_PIXEL_SR * 1e9
                 flux_val = float(np.nansum(aperture_data - sky_bg)) * to_mjy
 
                 # Estimate uncertainty as background std dev * sqrt(area)
-                sky_std = float(np.nanstd(data))
                 area = aperture_data.size
                 flux_err = float(sky_std * math.sqrt(area)) * to_mjy if area > 0 else None
 

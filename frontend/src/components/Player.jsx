@@ -41,6 +41,10 @@ export default function Player({ frames, describe, autoPlay = true }) {
   const [position, setPosition] = useState(0)
   const [playing, setPlaying] = useState(autoPlay)
   const [fps, setFps] = useState(4)
+  const [blink, setBlink] = useState(false)
+  const [inverted, setInverted] = useState(false)
+  const [reticle, setReticle] = useState(false)
+  const [zoom, setZoom] = useState(false)
 
   const playable = useMemo(() => frames.filter((f) => !failed.has(f.src)), [frames, failed])
   const count = playable.length
@@ -62,12 +66,18 @@ export default function Player({ frames, describe, autoPlay = true }) {
     return () => images.forEach((img) => (img.onerror = null))
   }, [frames])
 
-  // Advance one frame per tick while playing.
+  // Advance one frame per tick while playing. In blink mode, alternates between first and last frame.
   useEffect(() => {
     if (!playing || count < 2) return undefined
-    const id = setTimeout(() => setPosition((i) => (Math.min(i, count - 1) + 1) % count), 1000 / fps)
+    const id = setTimeout(() => {
+      if (blink) {
+        setPosition((i) => (i === 0 ? count - 1 : 0))
+      } else {
+        setPosition((i) => (Math.min(i, count - 1) + 1) % count)
+      }
+    }, 1000 / fps)
     return () => clearTimeout(id)
-  }, [playing, fps, count, index])
+  }, [playing, fps, count, index, blink])
 
   const step = (delta) => {
     if (!count) return
@@ -108,14 +118,19 @@ export default function Player({ frames, describe, autoPlay = true }) {
 
   return (
     <div className="player">
-      <div className="player__viewport">
+      <div className={`player__viewport ${zoom ? 'player__viewport--zoomed' : ''}`}>
         <img
-          className="player__image"
+          className={`player__image ${inverted ? 'player__image--inverted' : ''} ${zoom ? 'player__image--zoomed' : ''}`}
           src={frame.src}
           alt={describe ? describe(frame) : frame.label || 'Sky image'}
           onError={() => markFailed(frame.src)}
           draggable="false"
         />
+        {reticle && (
+          <div className="player__reticle" aria-hidden="true">
+            <span className="player__reticle-circle" />
+          </div>
+        )}
       </div>
 
       <dl className="player__info">
@@ -139,6 +154,12 @@ export default function Player({ frames, describe, autoPlay = true }) {
           <div title="The star is brighter than the detector can measure. The white core is saturated, not a measured value.">
             <dt>Core</dt>
             <dd className="player__saturated">Saturated</dd>
+          </div>
+        )}
+        {frame.flags && frame.flags.length > 0 && (
+          <div title="Instrument contamination flags detected in aperture">
+            <dt>Flags</dt>
+            <dd className="player__flag-badge">{frame.flags.join(', ')}</dd>
           </div>
         )}
       </dl>
@@ -179,18 +200,70 @@ export default function Player({ frames, describe, autoPlay = true }) {
         </span>
       </div>
 
-      <label className="player__speed">
-        <span>Speed</span>
-        <input
-          type="range"
-          min={MIN_FPS}
-          max={MAX_FPS}
-          value={fps}
-          onChange={(e) => setFps(Number(e.target.value))}
-          aria-valuetext={`${fps} frames per second`}
-        />
-        <span className="mono">{fps} fps</span>
-      </label>
+      <div className="player__tools-row">
+        <label className="player__speed">
+          <span>Speed</span>
+          <input
+            type="range"
+            min={MIN_FPS}
+            max={MAX_FPS}
+            value={fps}
+            onChange={(e) => setFps(Number(e.target.value))}
+            aria-valuetext={`${fps} frames per second`}
+          />
+          <span className="mono">{fps} fps</span>
+        </label>
+
+        <div className="player__tools" role="toolbar" aria-label="Astronomer Tools">
+          <button
+            type="button"
+            className="player__tool-button"
+            aria-pressed={blink}
+            onClick={() => {
+              setBlink((b) => !b)
+              if (!playing) setPlaying(true)
+            }}
+            title="Blink comparator: rapidly alternate between first and last frame to spot moving objects"
+          >
+            {blink ? 'Blinking (1 ↔ ' + count + ')' : 'Blink (1 ↔ ' + count + ')'}
+          </button>
+          <button
+            type="button"
+            className="player__tool-button"
+            aria-pressed={inverted}
+            onClick={() => setInverted((v) => !v)}
+            title="Invert colormap: negative mode (black stars on light background) for high contrast"
+          >
+            Negative
+          </button>
+          <button
+            type="button"
+            className="player__tool-button"
+            aria-pressed={reticle}
+            onClick={() => setReticle((r) => !r)}
+            title="Toggle central celestial crosshair"
+          >
+            Reticle
+          </button>
+          <button
+            type="button"
+            className="player__tool-button"
+            aria-pressed={zoom}
+            onClick={() => setZoom((z) => !z)}
+            title="2x center magnification"
+          >
+            2x Zoom
+          </button>
+          <a
+            href={frame.src}
+            download={`spherex_${frame.detector || 'sky'}_frame_${index + 1}.png`}
+            className="player__tool-button"
+            title="Download current frame as PNG image"
+          >
+            Save PNG
+          </a>
+        </div>
+      </div>
     </div>
   )
 }

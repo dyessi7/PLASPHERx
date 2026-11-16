@@ -22,7 +22,7 @@ export default function SearchForm({ form, errors, onFieldChange, onSubmit, disa
       }}
     >
       <h2 className="section-title">Search the sky by coordinates</h2>
-      <p className="section-hint">Decimal degrees (J2000).</p>
+      <p className="section-hint">Decimal degrees or sexagesimal (e.g. 08h55m10s, −07d14m42s).</p>
 
       {disabled && (
         <p className="status status--error" role="alert">

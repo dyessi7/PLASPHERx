@@ -65,6 +65,16 @@ function queryParams({ ra, dec, fov, detector }, n) {
   return { ra: String(ra), dec: String(dec), fov: String(fov), detector, n: String(n) }
 }
 
+/** Predefined catalog targets from the backend. */
+export async function loadTargets({ signal } = {}) {
+  try {
+    const body = await getJson('/api/targets', {}, { signal })
+    return Array.isArray(body.targets) ? body.targets : []
+  } catch {
+    return []
+  }
+}
+
 /** Frame list for a sky position. Frame URLs are absolute and sorted by date. */
 export async function loadFrames(query, { signal } = {}) {
   const body = await getJson('/api/frames', queryParams(query, 16), { signal })
@@ -95,10 +105,13 @@ export async function loadFrameImage(url, { signal } = {}) {
   const header = res.headers.get('X-Wavelength-Um')
   const wavelength = header === null || header.trim() === '' ? NaN : Number(header)
   const saturatedHeader = res.headers.get('X-Saturated')
+  const flagsHeader = res.headers.get('X-Contamination-Flags')
+  const flags = flagsHeader && flagsHeader.trim() !== 'none' ? flagsHeader.split(',').filter(Boolean) : []
   return {
     objectUrl: URL.createObjectURL(blob),
     wavelengthUm: Number.isFinite(wavelength) ? wavelength : null,
     saturated: saturatedHeader === null ? null : saturatedHeader.trim() === '1',
+    contaminationFlags: flags,
   }
 }
 
@@ -116,7 +129,7 @@ export async function loadEpochs(query, { signal } = {}) {
 /** Photometry for one detector. Returns null if the endpoint is not available. */
 export async function loadSpectrum(query, { signal } = {}) {
   try {
-    const body = await getJson('/api/spectrum', queryParams(query, 4), { signal })
+    const body = await getJson('/api/spectrum', queryParams(query, 12), { signal })
     return { ...body, points: Array.isArray(body.points) ? body.points : [] }
   } catch (err) {
     if (err instanceof ApiError && UNAVAILABLE_STATUSES.has(err.status)) return null

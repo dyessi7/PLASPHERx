@@ -108,7 +108,10 @@ def test_get_frame_ssrf_protection(client):
 
 
 def test_frame_cors_exposes_wavelength_header(client):
-    """Allows the local frontend to read the optional wavelength response header."""
+    """Allows the local frontend to read the optional metadata response headers."""
     resp = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
     assert resp.headers["access-control-allow-origin"] == "http://localhost:5173"
-    assert "X-Wavelength-Um" in resp.headers["access-control-expose-headers"]
+    exposed = resp.headers["access-control-expose-headers"]
+    assert "X-Wavelength-Um" in exposed
+    assert "X-Saturated" in exposed
+    assert "X-Contamination-Flags" in exposed

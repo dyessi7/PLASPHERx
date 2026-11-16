@@ -48,11 +48,12 @@ export default function useLiveFrames(query, runKey) {
       await forEachConcurrent(slots, IMAGE_CONCURRENCY, async (slot) => {
         if (signal.aborted) return
         try {
-          const { objectUrl, wavelengthUm, saturated } = await loadFrameImage(slot.url, { signal })
+          const { objectUrl, wavelengthUm, saturated, contaminationFlags } = await loadFrameImage(slot.url, { signal })
           objectUrls.push(objectUrl)
           slot.src = objectUrl
           slot.wavelength_um = wavelengthUm
           slot.saturated = saturated
+          slot.flags = contaminationFlags || []
         } catch {
           // A failed frame is skipped; the rest of the animation still loads.
         }

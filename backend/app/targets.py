@@ -61,7 +61,7 @@ TARGETS_CATALOG: dict[str, dict[str, Any]] = {
     },
     "eps_ind": {
         "id": "eps_ind",
-        "name": "Epsilon Indi",
+        "name": "Epsilon Indi B",
         "description": "Nearby stellar system hosting a brown dwarf binary pair and a confirmed Jovian exoplanet.",
         "target_type": "mover",
         "ra": 331.0438,
@@ -102,8 +102,8 @@ def calculate_target_position(target_id: str, date_str: str = "2026-01-01") -> t
                 obstime=Time(o["epoch"], format="jyear"),
                 frame="icrs",
             )
-            hoy = coord.apply_space_motion(new_obstime=Time(date_str))
-            return float(round(hoy.ra.deg, 6)), float(round(hoy.dec.deg, 6))
+            new_coord = coord.apply_space_motion(new_obstime=Time(date_str))
+            return float(round(new_coord.ra.deg, 6)), float(round(new_coord.dec.deg, 6))
     except Exception:
         import math
         from datetime import datetime
@@ -152,14 +152,25 @@ def list_targets(apply_pm: bool = False) -> list[TargetItem]:
 
 
 def find_target_by_coords(ra: float, dec: float, tolerance_deg: float = 0.05) -> TargetItem | None:
-    """Identifies whether given (RA, Dec) coordinates match a known catalog target within tolerance."""
+    """Identifies whether given (RA, Dec) coordinates match a known catalog target within tolerance.
+
+    Checks both the proper-motion propagated position and the base catalog coordinates.
+    """
     import math
 
-    for tid, _ in TARGETS_CATALOG.items():
+    for tid, entry in TARGETS_CATALOG.items():
+        # Check against propagated position
         tra, tdec = calculate_target_position(tid, settings.REFERENCE_EPOCH)
         dra = (ra - tra) * math.cos(math.radians((dec + tdec) / 2.0))
         ddec = dec - tdec
-        dist = math.sqrt(dra * dra + ddec * ddec)
-        if dist <= tolerance_deg:
+        if math.sqrt(dra * dra + ddec * ddec) <= tolerance_deg:
             return get_target_by_id(tid, apply_pm=True)
+
+        # Also check against base (J2000/original) position
+        base_ra, base_dec = float(entry["ra"]), float(entry["dec"])
+        dra_base = (ra - base_ra) * math.cos(math.radians((dec + base_dec) / 2.0))
+        ddec_base = dec - base_dec
+        if math.sqrt(dra_base * dra_base + ddec_base * ddec_base) <= tolerance_deg:
+            return get_target_by_id(tid, apply_pm=True)
+
     return None

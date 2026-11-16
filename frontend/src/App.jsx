@@ -90,6 +90,8 @@ export default function App() {
         label: f.date,
         detector: f.detector,
         wavelength_um: f.wavelength_um,
+        saturated: f.saturated,
+        flags: f.flags,
       })),
     [frames.frames],
   )
@@ -123,9 +125,20 @@ export default function App() {
 
         {query ? (
           <section className="results panel" aria-labelledby="results-title">
-            <h2 id="results-title" className="results__title mono">
-              {coords} · FOV {query.fov}° · {query.detector}
-            </h2>
+            <div className="results__header">
+              <h2 id="results-title" className="results__title mono">
+                {coords} · FOV {query.fov}° · {query.detector}
+              </h2>
+              <a
+                href={`https://aladin.cds.unistra.fr/AladinLite/?target=${encodeURIComponent(`${query.ra} ${query.dec}`)}&fov=${query.fov}&survey=P%2FallWISE%2Fcolor`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="results__aladin-link"
+                title="Compare this sky patch with NASA's 2010 AllWISE survey in CDS Aladin Lite"
+              >
+                Compare with AllWISE (2010) ↗
+              </a>
+            </div>
 
             {tabs.length > 1 && (
               <div className="tabs" role="tablist" aria-label="Result views">

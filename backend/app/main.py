@@ -39,7 +39,7 @@ app.add_middleware(
     allow_methods=settings.ALLOWED_METHODS,
     allow_headers=["*"],
     # Lets the browser read the metadata headers on /api/frame responses.
-    expose_headers=["X-Wavelength-Um", "X-Saturated"],
+    expose_headers=["X-Wavelength-Um", "X-Saturated", "X-Contamination-Flags"],
 )
 
 @app.exception_handler(HTTPException)
@@ -194,14 +194,23 @@ def get_frames(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to retrieve metadata from IRSA: {exc}")
 
-    base_url = str(request.base_url).rstrip("/")
     frames_payload: list[FrameItem] = []
+
+    # All frames share the contrast stretch of one reference frame (the middle
+    # one), so brightness changes between frames remain visible.
+    ref_param = (
+        f"&ref={quote(selected[len(selected) // 2]['access_url'], safe='')}" if selected else ""
+    )
 
     for row in selected:
         access_url = row["access_url"]
         encoded_src = quote(access_url, safe="")
+        # Relative URL: the client resolves it against its API base. An absolute
+        # URL built from the request host would be wrong behind a proxy (http vs
+        # https) and would leak one host into payloads cached for another.
         frame_url = (
-            f"{base_url}/api/frame?src={encoded_src}&ra={target_ra}&dec={target_dec}&fov={target_fov}"
+            f"/api/frame?src={encoded_src}&ra={target_ra}&dec={target_dec}&fov={target_fov}"
+            f"{ref_param}"
             # Changes with the rendering, so browsers drop PNGs cached under the old look.
             f"&v={spherex.RENDER_VERSION}"
         )
@@ -233,6 +242,16 @@ def get_frames(
     return response_data
 
 
+def _reference_limits(ref_url: str, ra: float, dec: float, fov: float) -> tuple[float, float] | None:
+    """Calculates contrast stretch limits from a reference frame in the sequence."""
+    try:
+        ref_fits = spherex.fetch_cutout(access_url=ref_url, ra=ra, dec=dec, fov=fov)
+        ref_arr = spherex.aligned_array(ref_fits, ra=ra, dec=dec, fov=fov)
+        return spherex.stretch_limits(ref_arr)
+    except Exception:
+        return None
+
+
 @app.get(
     "/api/frame",
     responses={
@@ -249,46 +268,69 @@ def get_frame(
     ra: float = Query(..., ge=0.0, le=360.0, description="Right Ascension in degrees"),
     dec: float = Query(..., ge=-90.0, le=90.0, description="Declination in degrees"),
     fov: float = Query(settings.DEFAULT_FOV, ge=0.02, le=0.5, description="Field of view in degrees"),
+    ref: str | None = Query(
+        None,
+        description="IRSA URL of the sequence's reference frame; its contrast stretch is applied to this frame",
+    ),
 ):
     """Serves the processed and aligned PNG frame:
 
     1. Checks the disk cache first for existing PNG.
     2. If not found, downloads the FITS cutout with fetch_cutout (using cache & semaphore).
-    3. Processes and aligns in memory with cutout_to_png.
+    3. Processes and aligns in memory with cutout_to_png, using the reference
+       frame's stretch limits when `ref` is given.
     4. Saves the resulting PNG to disk cache and returns the image response.
     """
-    if not src.startswith(settings.IRSA_PREFIX):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid 'src' URL. Only official URLs starting with {settings.IRSA_PREFIX} are allowed.",
-        )
+    for name, url in (("src", src), ("ref", ref)):
+        if url is not None and not url.startswith(settings.IRSA_PREFIX):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid '{name}' URL. Only official URLs starting with {settings.IRSA_PREFIX} are allowed.",
+            )
 
     # 1. Check PNG frame cache
-    cache_key = cache.make_frame_key(src=src, ra=ra, dec=dec, fov=fov)
+    cache_key = cache.make_frame_key(src=src, ra=ra, dec=dec, fov=fov, ref=ref)
     png_bytes = cache.get_cached_frame(cache_key)
 
     if png_bytes is not None:
-        # The FITS is only needed for the wavelength header; never re-download it for that.
-        fits_bytes = cache.get_cached_fits(cache.make_cutout_key(src, ra=ra, dec=dec, fov=fov))
+        meta = cache.get_cached_frame_meta(cache_key)
+        if meta is not None:
+            wavelength = meta.get("wavelength")
+            is_saturated = meta.get("saturated", False)
+            flags = meta.get("flags", [])
+        else:
+            fits_bytes = cache.get_cached_fits(cache.make_cutout_key(src, ra=ra, dec=dec, fov=fov))
+            wavelength = spherex.cutout_wavelength(fits_bytes, ra=ra, dec=dec) if fits_bytes else None
+            is_saturated = spherex.saturated_at(fits_bytes, ra=ra, dec=dec) if fits_bytes else False
+            flags = spherex.contamination_flags_at(fits_bytes, ra=ra, dec=dec) if fits_bytes else []
+            cache.save_cached_frame_meta(cache_key, {"wavelength": wavelength, "saturated": is_saturated, "flags": flags})
     else:
         # 2. Fetch and process cutout on the fly
         try:
             fits_bytes = spherex.fetch_cutout(access_url=src, ra=ra, dec=dec, fov=fov)
-            png_bytes = spherex.cutout_to_png(fits_bytes, ra=ra, dec=dec, fov=fov, zoom=4)
+            limits = _reference_limits(ref, ra, dec, fov) if ref and ref != src else None
+            array = spherex.aligned_array(fits_bytes, ra=ra, dec=dec, fov=fov)
+            if limits is None:
+                limits = spherex.stretch_limits(array)
+            png_bytes = spherex.array_to_png(array, zoom=4, limits=limits)
         except TimeoutError:
             raise HTTPException(status_code=504, detail="IRSA cutout download timed out.")
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Failed to process cutout from IRSA: {exc}")
 
-        # Save PNG to cache
+        # Save PNG and metadata to cache
         cache.save_cached_frame(cache_key, png_bytes)
+        wavelength = spherex.cutout_wavelength(fits_bytes, ra=ra, dec=dec) if fits_bytes else None
+        is_saturated = spherex.saturated_at(fits_bytes, ra=ra, dec=dec) if fits_bytes else False
+        flags = spherex.contamination_flags_at(fits_bytes, ra=ra, dec=dec) if fits_bytes else []
+        cache.save_cached_frame_meta(cache_key, {"wavelength": wavelength, "saturated": is_saturated, "flags": flags})
 
     headers = {"Cache-Control": f"public, max-age={settings.FRAME_CACHE_MAX_AGE_SECONDS}"}
-    wavelength = spherex.cutout_wavelength(fits_bytes, ra=ra, dec=dec) if fits_bytes else None
     if wavelength is not None:
         headers["X-Wavelength-Um"] = str(wavelength)
-    if fits_bytes:
-        headers["X-Saturated"] = "1" if spherex.saturated_at(fits_bytes, ra=ra, dec=dec) else "0"
+    headers["X-Saturated"] = "1" if is_saturated else "0"
+    if flags:
+        headers["X-Contamination-Flags"] = ",".join(flags)
 
     return Response(content=png_bytes, media_type="image/png", headers=headers)
 
@@ -350,18 +392,24 @@ def get_epochs(
     if not frames_list:
         raise HTTPException(status_code=502, detail="None of the frames could be retrieved from IRSA.")
 
-    epoch_items: list[EpochItem] = []
+    epoch_clusters = spherex.build_epochs(frames_list, threshold_days=threshold_days)
     stacks: list[np.ndarray] = []
-    for e in spherex.build_epochs(frames_list, threshold_days=threshold_days):
+    for e in epoch_clusters:
         with warnings.catch_warnings():
             # Pixels that are NaN in every frame stay NaN; that is expected.
             warnings.simplefilter("ignore", RuntimeWarning)
             stack = np.nanmean(np.stack([f["array"] for f in e["frames"]]), axis=0)
         stacks.append(stack)
+
+    # Shared stretch limits across all epoch stacks so brightness changes stay visible
+    shared_limits = spherex.stretch_limits(*stacks) if stacks else None
+
+    epoch_items: list[EpochItem] = []
+    for idx, e in enumerate(epoch_clusters):
         epoch_items.append(
             EpochItem(
                 id=f"e{e['epoch_index']}",
-                url=spherex.png_data_uri(spherex.array_to_png(stack, zoom=4)),
+                url=spherex.png_data_uri(spherex.array_to_png(stacks[idx], zoom=4, limits=shared_limits)),
                 date_start=e["start_date"],
                 date_end=e["end_date"],
                 mjd_mid=e["mjd_mean"],

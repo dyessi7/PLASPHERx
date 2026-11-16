@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
-    ALLOWED_METHODS: list[str] = ["GET", "POST", "OPTIONS"]
+    ALLOWED_METHODS: list[str] = ["GET", "OPTIONS"]
 
     # Storage & Cache (Portable: defaults to backend/data/cache, configurable via SPHEREX_CACHE_DIR)
     CACHE_DIR: Path = Field(

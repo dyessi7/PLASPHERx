@@ -7,12 +7,59 @@ const EMPTY_FORM = { ra: '', dec: '', fov: String(DEFAULT_FOV), detector: DEFAUL
 
 const FIELD_NAMES = { ra: 'RA', dec: 'Dec', fov: 'Field of view' }
 
+function parseSexagesimal(name, rawText) {
+  const clean = String(rawText ?? '').trim()
+  if (clean === '') return NaN
+
+  // 1. Direct decimal number
+  const asNumber = Number(clean)
+  if (Number.isFinite(asNumber)) {
+    return asNumber
+  }
+
+  // 2. HMS format for RA: e.g. 08h55m10.831s or 8h 55m 10.8s
+  const hmsMatch = clean.match(/^(\d+(?:\.\d+)?)\s*h\s*(\d+(?:\.\d+)?)\s*m\s*(\d+(?:\.\d+)?)\s*s?$/i)
+  if (hmsMatch && name === 'ra') {
+    const h = parseFloat(hmsMatch[1])
+    const m = parseFloat(hmsMatch[2])
+    const s = parseFloat(hmsMatch[3])
+    return (h + m / 60 + s / 3600) * 15.0
+  }
+
+  // 3. DMS format: e.g. -7d14m42.53s or +30d24m05s
+  const dmsMatch = clean.match(/^([+-]?\d+(?:\.\d+)?)\s*d\s*(\d+(?:\.\d+)?)\s*m\s*(\d+(?:\.\d+)?)\s*s?$/i)
+  if (dmsMatch) {
+    const sign = clean.startsWith('-') ? -1 : 1
+    const d = Math.abs(parseFloat(dmsMatch[1]))
+    const m = parseFloat(dmsMatch[2])
+    const s = parseFloat(dmsMatch[3])
+    return sign * (d + m / 60 + s / 3600)
+  }
+
+  // 4. Colon-separated or space-separated: e.g. "08:55:10.83" or "-07:14:42.5" or "08 55 10.83"
+  const parts = clean.split(/[:\s]+/).filter(Boolean)
+  if (parts.length === 3 && parts.every((p) => Number.isFinite(Number(p)))) {
+    const sign = clean.startsWith('-') ? -1 : 1
+    const p0 = Math.abs(parseFloat(parts[0]))
+    const p1 = parseFloat(parts[1])
+    const p2 = parseFloat(parts[2])
+    const total = p0 + p1 / 60 + p2 / 3600
+    if (name === 'ra') {
+      return total * 15.0 // Convert hours to degrees for RA
+    }
+    return sign * total
+  }
+
+  return NaN
+}
+
 function parseField(name, raw) {
   const text = String(raw ?? '').trim()
   const { min, max } = FIELD_LIMITS[name]
   if (text === '') return { error: `${FIELD_NAMES[name]} is required.` }
-  const value = Number(text)
-  if (!Number.isFinite(value)) return { error: `${FIELD_NAMES[name]} must be a number in decimal degrees.` }
+  const parsed = name === 'fov' ? Number(text) : parseSexagesimal(name, text)
+  if (!Number.isFinite(parsed)) return { error: `${FIELD_NAMES[name]} must be valid decimal degrees or sexagesimal (e.g. 08h55m10s).` }
+  const value = Math.round(parsed * 1e5) / 1e5
   if (value < min || value > max) return { error: `${FIELD_NAMES[name]} must be between ${min} and ${max}.` }
   return { value }
 }
