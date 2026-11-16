@@ -15,15 +15,24 @@
 .app-main,
 .app-footer__inner {
   width: 100%;
-  max-width: 960px;
-  margin: 0 auto;
-  padding-left: 16px;
-  padding-right: 16px;
+  padding-left: 24px;
+  padding-right: 24px;
 }
 
 .app-header__inner {
   padding-top: 14px;
   padding-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-team {
+  margin: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 
 .app-title {
@@ -37,13 +46,38 @@
   font-size: 0.9rem;
 }
 
+/* Two columns: filters on the left, results (frames, epochs, spectrum) on the right. */
 .app-main {
   flex: 1;
   padding-top: 24px;
   padding-bottom: 32px;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 24px;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  min-width: 0;
+}
+
+.app-content {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .app-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-sidebar {
+    position: static;
+  }
 }
 
 .app-footer {
@@ -55,6 +89,24 @@
 .app-footer__inner {
   padding-top: 14px;
   padding-bottom: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+}
+
+.app-footer__line {
+  margin: 0;
+}
+
+.app-footer a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app-footer a:hover {
+  color: var(--accent);
 }
 
 /* Shared panel and status message styles. */
@@ -90,7 +142,7 @@
 
 .results__aladin-link {
   font-size: 0.8rem;
-  color: var(--accent);
+  color: var(--purple);
   text-decoration: none;
   padding: 4px 10px;
   border-radius: var(--radius);
@@ -100,6 +152,7 @@
 }
 
 .results__aladin-link:hover {
-  border-color: var(--accent);
+  color: var(--purple-strong);
+  border-color: var(--purple);
   text-decoration: underline;
 }
