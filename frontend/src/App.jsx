@@ -12,6 +12,7 @@ import SearchForm from './components/SearchForm.jsx'
 import TargetButtons from './components/TargetButtons.jsx'
 import Player from './components/Player.jsx'
 import EpochView from './components/EpochView.jsx'
+import { AboutSheet } from './components/InfoSheets.jsx'
 import './styles/tabs.css'
 
 // recharts is large; load it only when the Spectrum tab is opened.
@@ -26,6 +27,20 @@ function initialState() {
 }
 
 const TAB_LABELS = { frames: 'Frames', epochs: 'Epochs', spectrum: 'Spectrum' }
+
+const FOOTER_LINKS = [
+  {
+    label: 'Challenge',
+    href: 'https://www.spaceappschallenge.org/2026/challenges/planet-x-and-spherex/',
+    title: 'NASA Space Apps Challenge 2026 · Planet X and SPHEREx',
+  },
+  {
+    label: 'Data',
+    href: 'https://irsa.ipac.caltech.edu/Missions/spherex.html',
+    title: 'SPHEREx data, via NASA/IPAC Infrared Science Archive (IRSA)',
+  },
+  { label: 'GitHub', href: 'https://github.com/dyessi7/PLASPHERx', title: 'Source code' },
+]
 
 function Placeholder({ children }) {
   return (
@@ -60,13 +75,13 @@ export default function App() {
     const result = validateForm(values)
     setErrors(result.errors)
     if (!result.query || !API_CONFIGURED) return
+    setActiveTab('frames')
     if (queryKey(result.query) === key) {
-      // Same search again: only restart it if the last one failed.
-      if (frames.status === 'error') setAttempt((a) => a + 1)
+      // Same search again: reload it (cached on the server, so it is quick).
+      setAttempt((a) => a + 1)
       return
     }
     setQuery(result.query)
-    setActiveTab('frames')
   }
 
   function handleFieldChange(name, value) {
@@ -202,21 +217,14 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        <div className="app-footer__inner">
-          <div className="app-footer__info">
-            <p className="app-footer__line">
-              Built for the{' '}
-              <a
-                href="https://www.spaceappschallenge.org/2026/challenges/planet-x-and-spherex/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                NASA Space Apps Challenge 2026 · Planet X and SPHEREx
-              </a>
-            </p>
-            <p className="app-footer__line">Data: SPHEREx, via NASA/IPAC Infrared Science Archive (IRSA)</p>
-          </div>
-        </div>
+        <nav className="app-footer__inner" aria-label="Project links">
+          <AboutSheet />
+          {FOOTER_LINKS.map((link) => (
+            <a key={link.label} href={link.href} target="_blank" rel="noopener noreferrer" title={link.title}>
+              {link.label}
+            </a>
+          ))}
+        </nav>
       </footer>
     </>
   )
