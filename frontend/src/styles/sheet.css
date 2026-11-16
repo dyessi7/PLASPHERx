@@ -1,0 +1,137 @@
+/* Footer About link and its floating black sheet centered on screen. */
+
+/* Looks exactly like the other footer links. */
+.sheet-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sheet-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s;
+}
+
+.sheet-backdrop.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.sheet {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 50;
+  width: min(880px, calc(100vw - 32px));
+  padding: 32px 48px;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  border: 1px solid #3a3a3a;
+  color: #fff;
+  color-scheme: dark;
+  font-family: "Times New Roman", Times, serif;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 24px));
+  visibility: hidden;
+  transition: transform 0.25s ease, opacity 0.25s ease, visibility 0.25s;
+}
+
+.sheet.is-open {
+  opacity: 1;
+  transform: translate(-50%, -50%);
+  visibility: visible;
+}
+
+.sheet__head {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+
+/* Title with a short centered rule under it, not edge to edge. */
+.sheet__head h2 {
+  font-size: 1.1rem;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #fff;
+}
+
+/* Sits in the corner so it does not push the title or change the margins. */
+.sheet__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.sheet__close:hover {
+  opacity: 1;
+}
+
+
+.sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+/* Sections stacked in one column, left aligned. */
+.sheet__section + .sheet__section {
+  margin-top: 20px;
+}
+
+.sheet__body h3 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sheet__body p {
+  margin: 0 0 8px;
+}
+
+
+
+
+
+
+.sheet__body code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .sheet-backdrop {
+    transition: none;
+  }
+}
