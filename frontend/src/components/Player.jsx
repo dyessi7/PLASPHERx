@@ -216,46 +216,36 @@ export default function Player({ frames, describe, autoPlay = true }) {
           <span className="mono">{fps} fps</span>
         </label>
 
-        <div className="player__tools" role="toolbar" aria-label="Astronomer Tools">
-          <button
-            type="button"
-            className="player__tool-button"
-            aria-pressed={blink}
-            onClick={() => {
-              setBlink((b) => !b)
-              if (!playing) setPlaying(true)
-            }}
+        <div className="player__tools" role="group" aria-label="Astronomer tools">
+          <label
+            className="player__check"
             title="Blink comparator: rapidly alternate between first and last frame to spot moving objects"
           >
-            {blink ? 'Blinking (1 ↔ ' + count + ')' : 'Blink (1 ↔ ' + count + ')'}
-          </button>
-          <button
-            type="button"
-            className="player__tool-button"
-            aria-pressed={inverted}
-            onClick={() => setInverted((v) => !v)}
+            <input
+              type="checkbox"
+              checked={blink}
+              onChange={(e) => {
+                setBlink(e.target.checked)
+                if (e.target.checked && !playing) setPlaying(true)
+              }}
+            />
+            Blink (1 ↔ {count})
+          </label>
+          <label
+            className="player__check"
             title="Invert colormap: negative mode (black stars on light background) for high contrast"
           >
+            <input type="checkbox" checked={inverted} onChange={(e) => setInverted(e.target.checked)} />
             Negative
-          </button>
-          <button
-            type="button"
-            className="player__tool-button"
-            aria-pressed={reticle}
-            onClick={() => setReticle((r) => !r)}
-            title="Toggle central celestial crosshair"
-          >
+          </label>
+          <label className="player__check" title="Toggle central celestial crosshair">
+            <input type="checkbox" checked={reticle} onChange={(e) => setReticle(e.target.checked)} />
             Reticle
-          </button>
-          <button
-            type="button"
-            className="player__tool-button"
-            aria-pressed={zoom}
-            onClick={() => setZoom((z) => !z)}
-            title="2x center magnification"
-          >
+          </label>
+          <label className="player__check" title="2x center magnification">
+            <input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} />
             2x Zoom
-          </button>
+          </label>
           <a
             href={frame.src}
             download={`spherex_${frame.detector || 'sky'}_frame_${index + 1}.png`}

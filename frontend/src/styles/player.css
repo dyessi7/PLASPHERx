@@ -266,7 +266,35 @@
 .player__tools {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
+}
+
+/* Tool toggles as plain checkboxes: box + label, no button frame. */
+.player__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.player__check:hover,
+.player__check:has(input:checked) {
+  color: var(--text);
+}
+
+.player__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.player__tools .player__tool-button {
+  margin-top: 4px;
 }
 
 .player__tool-button {
@@ -290,9 +318,3 @@
   border-color: var(--accent);
 }
 
-.player__tool-button[aria-pressed="true"] {
-  background: var(--accent);
-  color: #08121f;
-  border-color: var(--accent);
-  font-weight: 600;
-}
