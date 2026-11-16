@@ -27,6 +27,7 @@ from app.config import get_settings
 logging.getLogger("astropy").setLevel(logging.ERROR)
 logging.getLogger("reproject").setLevel(logging.ERROR)
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 conf.remote_timeout = settings.IRSA_TIMEOUT_SECONDS
 
@@ -68,7 +69,8 @@ def _is_timeout_error(error: BaseException) -> bool:
     if isinstance(error, TimeoutError) or "timeout" in type(error).__name__.lower():
         return True
     cause = error.__cause__ or error.__context__ or getattr(error, "reason", None)
-    return cause is not None and cause is not error and _is_timeout_error(cause)
+    # urllib's URLError.reason is an exception, but pyvo's DALServiceError.reason is a string.
+    return isinstance(cause, BaseException) and cause is not error and _is_timeout_error(cause)
 
 
 def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
@@ -78,14 +80,38 @@ def search_images(ra: float, dec: float) -> list[dict[str, Any]]:
     if cached is not None:
         return cached
 
-    try:
-        rows = _search_images_uncached(ra, dec)
-    except Exception as exc:
-        if _is_timeout_error(exc):
-            raise TimeoutError("IRSA image search timed out.") from exc
-        raise
+    # IRSA's SIA service intermittently answers 502/503; retry those like cutouts do.
+    for attempt in range(settings.IRSA_MAX_RETRIES):
+        try:
+            rows = _search_images_uncached(ra, dec)
+            break
+        except Exception as exc:
+            if attempt < settings.IRSA_MAX_RETRIES - 1 and _is_retryable_http_error(exc) and not _is_timeout_error(exc):
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            # IRSA is unavailable: an expired result is better than no result.
+            stale = cache.get_cached_metadata(key, max_age_seconds=math.inf)
+            if stale is not None:
+                logger.warning("IRSA search failed (%s); serving expired cached results.", exc)
+                return stale
+            if _is_timeout_error(exc):
+                raise TimeoutError("IRSA image search timed out.") from exc
+            raise
     cache.save_cached_metadata(key, rows)
     return rows
+
+
+def _is_retryable_http_error(error: BaseException) -> bool:
+    """False only for client errors (4xx except 408/429), which fail the same way on retry.
+
+    IRSA outages surface as 5xx statuses or as pyvo errors with no status at all
+    (e.g. "Unable to access the capabilities endpoint"), so both are retried.
+    """
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None) or getattr(error, "code", None)
+    if isinstance(status, int):
+        return status in _RETRYABLE_HTTP_STATUSES or status >= 500
+    return True
 
 
 def _search_images_uncached(ra: float, dec: float) -> list[dict[str, Any]]:
