@@ -7,9 +7,11 @@
   --border: #262626;
   --text: #ededed;
   --text-muted: #a1a1a1;
-  --accent: #52a8ff;
-  --accent-strong: #8cc4ff;
-  --selected: #50e3c2;
+  --accent: #ffffff;
+  --accent-strong: #d4d4d4;
+  --purple: #bf40ff;
+  --purple-strong: #d580ff;
+  --selected: #ffffff;
   --danger: #ff8a80;
   --warning: #ffd479;
   --focus: #ffd479;
