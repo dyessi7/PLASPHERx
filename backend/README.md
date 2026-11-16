@@ -6,7 +6,7 @@ FastAPI backend that queries SPHEREx observations from IRSA and generates cutout
 
 - `GET /api/frames` queries the IRSA SIA catalog. Search results are cached for 10 minutes, and frame sequence metadata is likewise reused for 10 minutes.
 - `GET /api/frame` downloads the requested cutout FITS via `fetch_cutout`. Raw bytes are stored on disk using a SHA-256 hash of `(access_url, ra, dec, fov)`. Concurrent requests for the same cutout share a single in-flight download, and both `/api/epochs` and `/api/spectrum` reuse these cached FITS files.
-- Processed PNGs are also cached. The combined disk cache for FITS, PNG, and metadata has a default size limit of 2 GiB (`SPHEREX_CACHE_MAX_BYTES`); when additional space is required, it evicts the least recently modified entries (LRU). Cutouts larger than the total limit are not persisted.
+- Processed PNGs are also cached. The combined disk cache for FITS, PNG, and metadata has a default size limit of 2 GiB (`SPHEREX_CACHE_MAX_BYTES`); when additional space is required, it uses atomic writes and evicts the least recently accessed entries (LRU). Cutouts larger than the total limit are not persisted.
 - A concurrency semaphore limits simultaneous download connections to IRSA to 3. The Docker container runs with a single worker process so this limit applies globally across all incoming requests.
 - In Docker, mount a persistent volume at `/app/data/cache` to preserve the cache across container restarts. In other deployment environments, configure `SPHEREX_CACHE_DIR` to a persistent path.
 
@@ -56,9 +56,9 @@ Returns the catalog of 5 predefined astronomical targets (`r_dra`, `rw_aur`, `ba
 
 Searches IRSA observations and returns temporally ordered frame metadata. Each frame object includes `url`, `mjd`, `date`, `detector`, and `wavelength_um` (initially `null`). `url` points to the on-the-fly `/api/frame` endpoint.
 
-### `GET /api/frame?src=&ra=&dec=&fov=`
+### `GET /api/frame?src=&ra=&dec=&fov=&ref=`
 
-Fetches or reuses the FITS cutout, aligns the celestial image (WCS re-projection), and streams `image/png`. `src` must start with `https://irsa.ipac.caltech.edu/`. Responses include HTTP `Cache-Control` headers and, when available from the FITS WCS, the `X-Wavelength-Um` header.
+Fetches or reuses the FITS cutout, aligns the celestial image (WCS re-projection), and streams `image/png`. `src` (and optional `ref`, used to apply a shared reference contrast stretch across a sequence) must start with `https://irsa.ipac.caltech.edu/`. Responses include HTTP `Cache-Control` headers and, when available from the FITS WCS, the `X-Wavelength-Um` header.
 
 ### `GET /api/epochs?ra=&dec=&fov=&detector=D2&n=16&threshold_days=45`
 

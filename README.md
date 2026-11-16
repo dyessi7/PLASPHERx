@@ -4,7 +4,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Astropy](https://img.shields.io/badge/Astropy-6.1+-FF6F00.svg?logo=python&logoColor=white)](https://www.astropy.org/)
-[![Tests](https://img.shields.io/badge/Tests-22%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-25%20passed-brightgreen.svg)]()
 [![NASA Space Apps Challenge](https://img.shields.io/badge/NASA%20Space%20Apps-2026-blue.svg)](https://www.spaceappschallenge.org/)
 
 **PLASPHERx (SPHEREx Sky Viewer)** is an interactive, real-time web platform for exploring time-domain astrophysics and celestial variability in the infrared sky using data from NASA's **SPHEREx** (Spectro-Photometer for the History of the Universe, Epoch of Reionization, and Ices Explorer) space telescope.
@@ -28,8 +28,9 @@ NASA's SPHEREx mission is mapping the entire celestial sphere every six months i
 
 ### 1. Progressive Infrared Frame Player
 - Enter any celestial coordinates ($\text{RA}$, $\text{Dec}$, $\text{FOV}$) or select suggested high-interest targets.
-- Streams and aligns observations chronologically, animating subtle infrared changes over time.
-- Direct extraction of observed central wavelength ($\lambda$) from the FITS tabular WCS.
+- Streams and aligns observations chronologically with shared sequence contrast stretching, preserving true brightness changes in variable stars.
+- Interactive inspection tools: **Blink** mode (first vs. last frame comparison), inverted contrast, center reticle overlay, zoom, and adjustable FPS.
+- Direct extraction of observed central wavelength ($\lambda$) from the FITS tabular WCS, plus per-frame saturation indicators.
 - Keyboard navigation (Space to play/pause, Arrow keys to step frames).
 
 ### 2. Epoch Stacking & Difference Imaging
@@ -78,7 +79,7 @@ PLASPHERx is built with a decoupled, high-throughput microservices architecture:
 - **Zero Precomputed Static Assets**: All images, differences, and spectra are computed dynamically on demand.
 - **Pure Memory Pipeline**: Processing operates on in-memory `bytes` streams, minimizing I/O bottlenecks.
 - **Respectful to NASA Infrastructure**: A concurrency semaphore throttles outbound connections to IRSA, preventing IP rate-limiting.
-- **Multi-Tiered LRU Cache**: Automatically caches raw FITS, processed PNGs, and search metadata on disk up to 2 GiB with least-recently-used eviction.
+- **Multi-Tiered LRU Cache**: Automatically caches raw FITS, processed PNGs, and search metadata on disk up to 2 GiB with atomic writes and true least-recently-used (last-access) eviction.
 
 ---
 
@@ -141,7 +142,7 @@ PLASPHERx includes comprehensive unit and integration tests covering coordinate 
 $env:PYTHONPATH="backend"
 pytest backend/tests -v
 ```
-**Test Results:** `22 passed in 0.35s` (100% passing).
+**Test Results:** `25 passed in 0.33s` (100% passing).
 
 ---
 
