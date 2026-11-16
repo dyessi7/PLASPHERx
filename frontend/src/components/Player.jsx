@@ -117,90 +117,92 @@ export default function Player({ frames, describe, autoPlay = true }) {
   const wavelength = formatWavelength(frame.wavelength_um)
 
   return (
-    <div className="player">
-      <div className={`player__viewport ${zoom ? 'player__viewport--zoomed' : ''}`}>
-        <img
-          className={`player__image ${inverted ? 'player__image--inverted' : ''} ${zoom ? 'player__image--zoomed' : ''}`}
-          src={frame.src}
-          alt={describe ? describe(frame) : frame.label || 'Sky image'}
-          onError={() => markFailed(frame.src)}
-          draggable="false"
-        />
-        {reticle && (
-          <div className="player__reticle" aria-hidden="true">
-            <span className="player__reticle-circle" />
-          </div>
-        )}
-      </div>
-
-      <dl className="player__info">
-        <div>
-          <dt>Date</dt>
-          <dd>{frame.label || '—'}</dd>
+    <div className="player player--split">
+      <div className="player__stage">
+        <div className={`player__viewport ${zoom ? 'player__viewport--zoomed' : ''}`}>
+          <img
+            className={`player__image ${inverted ? 'player__image--inverted' : ''} ${zoom ? 'player__image--zoomed' : ''}`}
+            src={frame.src}
+            alt={describe ? describe(frame) : frame.label || 'Sky image'}
+            onError={() => markFailed(frame.src)}
+            draggable="false"
+          />
+          {reticle && (
+            <div className="player__reticle" aria-hidden="true">
+              <span className="player__reticle-circle" />
+            </div>
+          )}
         </div>
-        {frame.detector && (
+
+        <dl className="player__info">
           <div>
-            <dt>Detector</dt>
-            <dd>{frame.detector}</dd>
+            <dt>Date</dt>
+            <dd>{frame.label || '—'}</dd>
           </div>
-        )}
-        {wavelength && (
-          <div>
-            <dt>Wavelength</dt>
-            <dd>{wavelength}</dd>
-          </div>
-        )}
-        {frame.saturated && (
-          <div title="The star is brighter than the detector can measure. The white core is saturated, not a measured value.">
-            <dt>Core</dt>
-            <dd className="player__saturated">Saturated</dd>
-          </div>
-        )}
-        {frame.flags && frame.flags.length > 0 && (
-          <div title="Instrument contamination flags detected in aperture">
-            <dt>Flags</dt>
-            <dd className="player__flag-badge">{frame.flags.join(', ')}</dd>
-          </div>
-        )}
-      </dl>
+          {frame.detector && (
+            <div>
+              <dt>Detector</dt>
+              <dd>{frame.detector}</dd>
+            </div>
+          )}
+          {wavelength && (
+            <div>
+              <dt>Wavelength</dt>
+              <dd>{wavelength}</dd>
+            </div>
+          )}
+          {frame.saturated && (
+            <div title="The star is brighter than the detector can measure. The white core is saturated, not a measured value.">
+              <dt>Core</dt>
+              <dd className="player__saturated">Saturated</dd>
+            </div>
+          )}
+          {frame.flags && frame.flags.length > 0 && (
+            <div title="Instrument contamination flags detected in aperture">
+              <dt>Flags</dt>
+              <dd className="player__flag-badge">{frame.flags.join(', ')}</dd>
+            </div>
+          )}
+        </dl>
 
-      <div className="player__controls">
-        <button type="button" className="icon-button" onClick={() => step(-1)} aria-label="Previous frame" disabled={count < 2}>
-          <Icon name="prev" />
-        </button>
-        <button
-          type="button"
-          className="icon-button icon-button--primary"
-          onClick={() => setPlaying((p) => !p)}
-          aria-label={playing ? 'Pause' : 'Play'}
-          disabled={count < 2}
-        >
-          <Icon name={playing ? 'pause' : 'play'} />
-        </button>
-        <button type="button" className="icon-button" onClick={() => step(1)} aria-label="Next frame" disabled={count < 2}>
-          <Icon name="next" />
-        </button>
+        <div className="player__controls">
+          <button type="button" className="icon-button" onClick={() => step(-1)} aria-label="Previous frame" disabled={count < 2}>
+            <Icon name="prev" />
+          </button>
+          <button
+            type="button"
+            className="icon-button icon-button--primary"
+            onClick={() => setPlaying((p) => !p)}
+            aria-label={playing ? 'Pause' : 'Play'}
+            disabled={count < 2}
+          >
+            <Icon name={playing ? 'pause' : 'play'} />
+          </button>
+          <button type="button" className="icon-button" onClick={() => step(1)} aria-label="Next frame" disabled={count < 2}>
+            <Icon name="next" />
+          </button>
 
-        <input
-          type="range"
-          className="player__scrubber"
-          min="0"
-          max={Math.max(count - 1, 0)}
-          value={index}
-          onChange={(e) => {
-            setPlaying(false)
-            setPosition(Number(e.target.value))
-          }}
-          aria-label="Frame position"
-          disabled={count < 2}
-        />
+          <input
+            type="range"
+            className="player__scrubber"
+            min="0"
+            max={Math.max(count - 1, 0)}
+            value={index}
+            onChange={(e) => {
+              setPlaying(false)
+              setPosition(Number(e.target.value))
+            }}
+            aria-label="Frame position"
+            disabled={count < 2}
+          />
 
-        <span className="player__counter mono" aria-live="off">
-          {index + 1} / {count}
-        </span>
+          <span className="player__counter mono" aria-live="off">
+            {index + 1} / {count}
+          </span>
+        </div>
       </div>
 
-      <div className="player__tools-row">
+      <div className="player__side">
         <label className="player__speed">
           <span>Speed</span>
           <input
