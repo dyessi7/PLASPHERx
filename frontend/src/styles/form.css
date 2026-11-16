@@ -115,7 +115,18 @@
 }
 
 .search-form > .button {
-  align-self: flex-start;
+  align-self: stretch;
+}
+
+/* Narrow sidebar column: two fields per row. */
+.app-sidebar .search-form__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 641px) and (max-width: 900px) {
+  .app-sidebar .search-form__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .targets {
@@ -136,7 +147,7 @@
   align-items: center;
   gap: 8px;
   border-color: var(--selected);
-  background: rgba(80, 227, 194, 0.08);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--selected);
 }
 
