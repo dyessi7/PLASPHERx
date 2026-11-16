@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import '../styles/player.css'
 
 const MIN_FPS = 1
@@ -25,6 +25,25 @@ function Icon({ name }) {
   )
 }
 
+// Four corner arrows: pointing out to expand, pointing in to exit full screen.
+const EXPAND_PATH = 'M10 10L4 4M4 9V4h5M14 10l6-6M15 4h5v5M10 14l-6 6M4 15v5h5M14 14l6 6M20 15v5h-5'
+const COLLAPSE_PATH = 'M4 4l6 6M5 10h5V5M20 4l-6 6M19 10h-5V5M4 20l6-6M5 14h5v5M20 20l-6-6M19 14h-5v5'
+
+function FullscreenIcon({ active }) {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path
+        d={active ? COLLAPSE_PATH : EXPAND_PATH}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function formatWavelength(um) {
   return um == null ? null : `${um.toFixed(3)} µm`
 }
@@ -45,6 +64,20 @@ export default function Player({ frames, describe, autoPlay = true }) {
   const [inverted, setInverted] = useState(false)
   const [reticle, setReticle] = useState(false)
   const [zoom, setZoom] = useState(false)
+  const viewportRef = useRef(null)
+  const [fullscreen, setFullscreen] = useState(false)
+  const canFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled
+
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === viewportRef.current)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen()
+    else viewportRef.current?.requestFullscreen().catch(() => {})
+  }
 
   const playable = useMemo(() => frames.filter((f) => !failed.has(f.src)), [frames, failed])
   const count = playable.length
@@ -119,7 +152,7 @@ export default function Player({ frames, describe, autoPlay = true }) {
   return (
     <div className="player player--split">
       <div className="player__stage">
-        <div className={`player__viewport ${zoom ? 'player__viewport--zoomed' : ''}`}>
+        <div ref={viewportRef} className={`player__viewport ${zoom ? 'player__viewport--zoomed' : ''}`}>
           <img
             className={`player__image ${inverted ? 'player__image--inverted' : ''} ${zoom ? 'player__image--zoomed' : ''}`}
             src={frame.src}
@@ -131,6 +164,17 @@ export default function Player({ frames, describe, autoPlay = true }) {
             <div className="player__reticle" aria-hidden="true">
               <span className="player__reticle-circle" />
             </div>
+          )}
+          {canFullscreen && (
+            <button
+              type="button"
+              className="player__expand"
+              onClick={toggleFullscreen}
+              aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+              title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+            >
+              <FullscreenIcon active={fullscreen} />
+            </button>
           )}
         </div>
 
