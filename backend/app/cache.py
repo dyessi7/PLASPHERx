@@ -194,8 +194,9 @@ def get_cached_metadata(key: str, max_age_seconds: int | None = None) -> Any | N
 
     try:
         mtime = path.stat().st_mtime
+        # Expired entries stay on disk (the size limit evicts them) so they can
+        # still be served as a fallback while IRSA is unavailable.
         if (time.time() - mtime) > max_age_seconds:
-            path.unlink(missing_ok=True)
             return None
 
         content = path.read_text(encoding="utf-8")
