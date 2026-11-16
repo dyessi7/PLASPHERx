@@ -107,95 +107,116 @@ export default function App() {
     <>
       <header className="app-header">
         <div className="app-header__inner">
-          <h1 className="app-title">SPHEREx Sky Viewer</h1>
-          <p className="app-subtitle">See how a patch of sky changes over time in infrared.</p>
+          <p className="app-team">VTG</p>
+          <div>
+            <h1 className="app-title">PLASPHEREx</h1>
+            <p className="app-subtitle">See how a patch of sky changes over time in infrared.</p>
+          </div>
         </div>
       </header>
 
       <main className="app-main">
-        <SearchForm
-          form={form}
-          errors={errors}
-          onFieldChange={handleFieldChange}
-          onSubmit={() => search(form)}
-          disabled={!API_CONFIGURED}
-        />
+        <aside className="app-sidebar" aria-label="Search filters">
+          <SearchForm
+            form={form}
+            errors={errors}
+            onFieldChange={handleFieldChange}
+            onSubmit={() => search(form)}
+            disabled={!API_CONFIGURED}
+          />
 
-        <TargetButtons onSelect={handleTargetSelect} disabled={!API_CONFIGURED} current={query} />
+          <TargetButtons onSelect={handleTargetSelect} disabled={!API_CONFIGURED} current={query} />
+        </aside>
 
-        {query ? (
-          <section className="results panel" aria-labelledby="results-title">
-            <div className="results__header">
-              <h2 id="results-title" className="results__title mono">
-                {coords} · FOV {query.fov}° · {query.detector}
-              </h2>
-              <a
-                href={`https://aladin.cds.unistra.fr/AladinLite/?target=${encodeURIComponent(`${query.ra} ${query.dec}`)}&fov=${query.fov}&survey=P%2FallWISE%2Fcolor`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="results__aladin-link"
-                title="Compare this sky patch with NASA's 2010 AllWISE survey in CDS Aladin Lite"
-              >
-                Compare with AllWISE (2010) ↗
-              </a>
-            </div>
-
-            {tabs.length > 1 && (
-              <div className="tabs" role="tablist" aria-label="Result views">
-                {tabs.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    role="tab"
-                    id={`tab-${t}`}
-                    aria-selected={tab === t}
-                    aria-controls="tab-panel"
-                    className="tabs__tab"
-                    onClick={() => setActiveTab(t)}
-                  >
-                    {TAB_LABELS[t]}
-                  </button>
-                ))}
+        <div className="app-content">
+          {query ? (
+            <section className="results panel" aria-labelledby="results-title">
+              <div className="results__header">
+                <h2 id="results-title" className="results__title mono">
+                  {coords} · FOV {query.fov}° · {query.detector}
+                </h2>
+                <a
+                  href={`https://aladin.cds.unistra.fr/AladinLite/?target=${encodeURIComponent(`${query.ra} ${query.dec}`)}&fov=${query.fov}&survey=P%2FallWISE%2Fcolor`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="results__aladin-link"
+                  title="Compare this sky patch with NASA's 2010 AllWISE survey in CDS Aladin Lite"
+                >
+                  Compare with AllWISE (2010) ↗
+                </a>
               </div>
-            )}
 
-            <div id="tab-panel" role={tabs.length > 1 ? 'tabpanel' : undefined} aria-labelledby={`tab-${tab}`}>
-              {tab === 'frames' && (
-                <FramesPanel
-                  frames={frames}
-                  playerFrames={playerFrames}
-                  runKey={runKey}
-                  coords={coords}
-                  detector={query.detector}
-                  onRetry={() => setAttempt((a) => a + 1)}
-                />
+              {tabs.length > 1 && (
+                <div className="tabs" role="tablist" aria-label="Result views">
+                  {tabs.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      role="tab"
+                      id={`tab-${t}`}
+                      aria-selected={tab === t}
+                      aria-controls="tab-panel"
+                      className="tabs__tab"
+                      onClick={() => setActiveTab(t)}
+                    >
+                      {TAB_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
               )}
 
-              {tab === 'epochs' &&
-                (epochs.status === 'ready' ? (
-                  <EpochView key={runKey} data={epochs.data} coords={coords} />
-                ) : (
-                  <p className="status status--error" role="alert">
-                    {epochs.error}
-                  </p>
-                ))}
+              <div id="tab-panel" role={tabs.length > 1 ? 'tabpanel' : undefined} aria-labelledby={`tab-${tab}`}>
+                {tab === 'frames' && (
+                  <FramesPanel
+                    frames={frames}
+                    playerFrames={playerFrames}
+                    runKey={runKey}
+                    coords={coords}
+                    detector={query.detector}
+                    onRetry={() => setAttempt((a) => a + 1)}
+                  />
+                )}
 
-              {tab === 'spectrum' && (
-                <Suspense fallback={<p className="status">Loading chart…</p>}>
-                  <SpectrumChart spectrum={spectrum} />
-                </Suspense>
-              )}
-            </div>
-          </section>
-        ) : (
-          API_CONFIGURED && (
-            <p className="status">Enter sky coordinates above, or pick a known target, to see its images over time.</p>
-          )
-        )}
+                {tab === 'epochs' &&
+                  (epochs.status === 'ready' ? (
+                    <EpochView key={runKey} data={epochs.data} coords={coords} />
+                  ) : (
+                    <p className="status status--error" role="alert">
+                      {epochs.error}
+                    </p>
+                  ))}
+
+                {tab === 'spectrum' && (
+                  <Suspense fallback={<p className="status">Loading chart…</p>}>
+                    <SpectrumChart spectrum={spectrum} />
+                  </Suspense>
+                )}
+              </div>
+            </section>
+          ) : (
+            API_CONFIGURED && (
+              <p className="status">Enter sky coordinates, or pick a known target, to see its images over time.</p>
+            )
+          )}
+        </div>
       </main>
 
       <footer className="app-footer">
-        <div className="app-footer__inner">Data: SPHEREx, via NASA/IPAC Infrared Science Archive (IRSA)</div>
+        <div className="app-footer__inner">
+          <div className="app-footer__info">
+            <p className="app-footer__line">
+              Built for the{' '}
+              <a
+                href="https://www.spaceappschallenge.org/2026/challenges/planet-x-and-spherex/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                NASA Space Apps Challenge 2026 · Planet X and SPHEREx
+              </a>
+            </p>
+            <p className="app-footer__line">Data: SPHEREx, via NASA/IPAC Infrared Science Archive (IRSA)</p>
+          </div>
+        </div>
       </footer>
     </>
   )
@@ -224,7 +245,7 @@ function FramesPanel({ frames, playerFrames, runKey, coords, detector, onRetry }
         <button type="button" className="button" onClick={onRetry}>
           Try again
         </button>
-        <p className="status__hint">Or pick one of the known targets above.</p>
+        <p className="status__hint">Or pick one of the known targets.</p>
       </div>
     )
   }
